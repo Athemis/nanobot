@@ -1,7 +1,6 @@
 """Media cleanup utilities for managing temporary files."""
 
 import atexit
-import signal
 import tempfile
 import threading
 import time
@@ -57,34 +56,25 @@ class MediaCleanupRegistry:
             self._start_periodic_cleanup()
 
     def _register_cleanup_handlers(self) -> None:
-        """Register atexit and signal handlers for cleanup."""
-        # Register atexit handler (runs on normal exit)
+        """
+        Register cleanup handlers for graceful shutdown.
+
+        Signal handlers are NOT registered to avoid async-signal-unsafe operations.
+        We rely on:        - atexit handler for file cleanup on normal exit
+        - Explicit shutdown via stop_periodic_cleanup() called by application
+
+        The periodic cleanup thread is non-daemon, so applications must call
+        stop_periodic_cleanup() during shutdown to avoid hanging.
+        """
         atexit.register(self._cleanup_on_exit)
 
-        # Register signal handlers (graceful shutdown)
-        try:
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                signal.signal(sig, self._signal_handler)
-        except (ValueError, NotImplementedError):
-            # Signals not available in all environments (e.g., Windows)
-            logger.debug("Signal handlers not available in this environment")
-
-    def _signal_handler(self, signum, frame) -> None:
-        """
-        Handle shutdown signals by running cleanup.
-
-        Args:
-            signum: Signal number received.
-            frame: Current stack frame.
-        """
-        logger.info(f"Received signal {signum}, running cleanup...")
-        self._cleanup_on_exit()
-        # Re-raise signal to allow default handling
-        signal.signal(signum, signal.SIG_DFL)
-        signal.raise_signal(signum)
-
     def _start_periodic_cleanup(self) -> None:
-        """Start background thread for periodic cleanup."""
+        """
+        Start background thread for periodic cleanup.
+
+        Note: Thread is non-daemon to ensure proper shutdown. The caller
+        must invoke stop_periodic_cleanup() during application shutdown.
+        """
         def cleanup_loop():
             while not self._shutdown:
                 try:
@@ -97,7 +87,7 @@ class MediaCleanupRegistry:
 
         self._cleanup_thread = threading.Thread(
             target=cleanup_loop,
-            daemon=True,
+            daemon=False,  # Non-daemon to ensure graceful shutdown
             name="MediaCleanupThread"
         )
         self._cleanup_thread.start()
@@ -254,7 +244,17 @@ class MediaCleanupRegistry:
         }
 
     def _cleanup_on_exit(self) -> None:
-        """Clean up all registered files on process exit."""
+        """
+        Clean up all registered files and stop periodic cleanup on process exit.
+
+        This is called by atexit during normal program termination.
+        """
+        # Stop periodic cleanup thread first
+        try:
+            self.stop_periodic_cleanup()
+        except Exception:
+            pass  # Ignore errors during shutdown
+
         with self._cleanup_lock:
             if not self._registered_files:
                 return

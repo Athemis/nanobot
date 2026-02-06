@@ -145,7 +145,7 @@ class ChannelManager:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def stop_all(self) -> None:
-        """Stop all channels and the dispatcher."""
+        """Stop all channels, the dispatcher, and cleanup services."""
         logger.info("Stopping all channels...")
 
         # Stop dispatcher
@@ -163,6 +163,13 @@ class ChannelManager:
                 logger.info(f"Stopped {name} channel")
             except Exception as e:
                 logger.error(f"Error stopping {name}: {e}")
+
+        # Stop media cleanup registry
+        if self._cleanup_registry:
+            try:
+                self._cleanup_registry.stop_periodic_cleanup()
+            except Exception as e:
+                logger.error(f"Error stopping media cleanup: {e}")
 
     async def _dispatch_outbound(self) -> None:
         """Dispatch outbound messages to the appropriate channel."""

@@ -11,11 +11,6 @@ from nanobot.utils.rate_limit import (
     transcription_rate_limiter,
     tts_rate_limiter,
     video_rate_limiter,
-    # Legacy class aliases (deprecated)
-    TranscriptionRateLimiter,
-    TTSRateLimiter,
-    VideoRateLimiter,
-    VisionRateLimiter,
 )
 
 __all__ = [
@@ -26,13 +21,8 @@ __all__ = [
     "get_cleanup_registry",
     "shutdown_cleanup_registry",
     "RateLimiter",
-    # Factory functions (preferred)
+    # Factory functions for rate limiters
     "tts_rate_limiter",
     "transcription_rate_limiter",
     "video_rate_limiter",
-    # Legacy classes (deprecated, use factory functions instead)
-    "TTSRateLimiter",
-    "TranscriptionRateLimiter",
-    "VideoRateLimiter",
-    "VisionRateLimiter",
 ]

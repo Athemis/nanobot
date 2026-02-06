@@ -3,7 +3,6 @@
 import asyncio
 import atexit
 import json
-import signal
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -29,22 +28,16 @@ class ProcessRegistry:
         self._register_cleanup_handlers()
 
     def _register_cleanup_handlers(self) -> None:
-        """Register signal handlers for graceful shutdown."""
-        # Register atexit handler
+        """
+        Register cleanup handlers for graceful shutdown.
+
+        Signal handlers are NOT registered to avoid async-signal-unsafe operations.
+        We rely solely on atexit for cleanup, which will be called on:
+        - Normal exit
+        - SIGTERM/SIGINT (unless custom handlers override default behavior)
+        - Exceptions that cause program termination
+        """
         atexit.register(self._cleanup_all)
-
-        # Register signal handlers (best effort)
-        try:
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                signal.signal(sig, self._signal_handler)
-        except (ValueError, NotImplementedError):
-            # Signals not available in all environments
-            pass
-
-    def _signal_handler(self, signum, frame) -> None:
-        """Handle shutdown signals by cleaning up processes."""
-        logger.info(f"Received signal {signum}, cleaning up {len(self._processes)} processes")
-        self._cleanup_all()
 
     def register(self, process: asyncio.subprocess.Process) -> None:
         """Register a process for tracking."""
@@ -173,7 +166,7 @@ class VideoProcessor:
 
         return True, None
 
-    def _validate_path_before_use(self, video_path: Path) -> None:
+    def _validate_path_before_use(self, video_path: Path) -> Path:
         """
         Validate a video path immediately before use (TOCTOU protection).
 
@@ -182,6 +175,9 @@ class VideoProcessor:
 
         Args:
             video_path: Path to validate.
+
+        Returns:
+            The resolved path (safe to use with subprocess).
 
         Raises:
             ValueError: If path is invalid or outside allowed directories.
@@ -199,6 +195,9 @@ class VideoProcessor:
 
         if not is_allowed:
             raise ValueError(f"Path outside allowed directories: {resolved}")
+
+        # Return resolved path to prevent symlink swap attacks
+        return resolved
 
     async def _run_subprocess(
         self,
@@ -304,7 +303,9 @@ class VideoProcessor:
 
         try:
             # Re-validate path right before subprocess call (TOCTOU protection)
-            self._validate_path_before_use(video_path)
+            # Use resolved path to prevent symlink swap attacks
+            validated_path = self._validate_path_before_use(video_path)
+            cmd[1] = str(validated_path)  # Replace -i argument with resolved path
             stdout, stderr, returncode = await self._run_subprocess(cmd, self.frame_timeout)
 
             if returncode != 0:
@@ -381,7 +382,9 @@ class VideoProcessor:
 
         try:
             # Re-validate path right before subprocess call (TOCTOU protection)
-            self._validate_path_before_use(video_path)
+            # Use resolved path to prevent symlink swap attacks
+            validated_path = self._validate_path_before_use(video_path)
+            cmd[1] = str(validated_path)  # Replace -i argument with resolved path
             stdout, stderr, returncode = await self._run_subprocess(cmd, self.audio_timeout)
 
             if returncode == 0 and output_path.exists():
@@ -435,7 +438,9 @@ class VideoProcessor:
 
         try:
             # Re-validate path right before subprocess call (TOCTOU protection)
-            self._validate_path_before_use(video_path)
+            # Use resolved path to prevent symlink swap attacks
+            validated_path = self._validate_path_before_use(video_path)
+            cmd[-1] = str(validated_path)  # Replace last argument with resolved path
             stdout, stderr, returncode = await self._run_subprocess(cmd, self.info_timeout)
 
             if returncode == 0:
