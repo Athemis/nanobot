@@ -164,6 +164,8 @@ class MultimodalConfig(BaseModel):
     max_image_size: int = 20 * 1024 * 1024  # 20MB default
     max_video_size: int = 100 * 1024 * 1024  # 100MB default
     max_video_frames: int = 5  # Max frames to extract from video
+    video_frame_interval: float = 5.0  # Seconds between frame extractions
+    video_max_frame_width: int = 640  # Max width for extracted frames (pixels)
     video_processing_timeout: int = 30  # ffmpeg timeout in seconds
     tts: TTSConfig = Field(default_factory=TTSConfig)
 
@@ -209,6 +211,27 @@ class MultimodalConfig(BaseModel):
             raise ValueError("video_processing_timeout must be at least 5 seconds")
         if v > 300:  # 5 minutes
             raise ValueError("video_processing_timeout cannot exceed 300 seconds")
+        return v
+
+    @field_validator("video_frame_interval")
+    @classmethod
+    def validate_video_frame_interval(cls, v: float) -> float:
+        """Validate video_frame_interval is within reasonable bounds."""
+        if v < 0.5:
+            raise ValueError("video_frame_interval must be at least 0.5 seconds")
+        if v > 60:  # 1 minute
+            raise ValueError("video_frame_interval cannot exceed 60 seconds")
+        return v
+
+    @field_validator("video_max_frame_width")
+    @classmethod
+    def validate_video_max_frame_width(cls, v: int) -> int:
+        """Validate video_max_frame_width is within reasonable bounds."""
+        if v < 320:
+            raise ValueError("video_max_frame_width must be at least 320 pixels")
+        if v > 3840:  # 4K width
+            raise ValueError("video_max_frame_width cannot exceed 3840 pixels")
+        return v
         return v
 
 

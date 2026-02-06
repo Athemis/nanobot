@@ -91,6 +91,9 @@ class VideoProcessor:
     DEFAULT_FRAME_TIMEOUT = 30.0
     DEFAULT_AUDIO_TIMEOUT = 30.0
     DEFAULT_INFO_TIMEOUT = 10.0
+    # Default frame extraction parameters
+    DEFAULT_FRAME_INTERVAL_SECONDS = 5.0  # Extract 1 frame every 5 seconds
+    DEFAULT_MAX_FRAME_WIDTH = 640  # Scale frames to max width (height auto)
     # Time to wait for process to terminate after SIGKILL
     # - Most processes terminate within 100ms after kill()
     # - 5 seconds handles edge cases (stuck in uninterruptible syscall, NFS, etc.)
@@ -101,6 +104,8 @@ class VideoProcessor:
         self,
         workspace: Path,
         max_frames: int = 5,
+        frame_interval_seconds: float = 5.0,
+        max_frame_width: int = 640,
         frame_timeout: float | None = None,
         audio_timeout: float | None = None,
         info_timeout: float | None = None,
@@ -111,6 +116,8 @@ class VideoProcessor:
         Args:
             workspace: Workspace directory for storing extracted content.
             max_frames: Maximum number of frames to extract.
+            frame_interval_seconds: Seconds between frame extractions (default: 5.0).
+            max_frame_width: Maximum width for extracted frames in pixels (default: 640).
             frame_timeout: Timeout for frame extraction (seconds).
             audio_timeout: Timeout for audio extraction (seconds).
             info_timeout: Timeout for video info query (seconds).
@@ -121,6 +128,8 @@ class VideoProcessor:
         self.frames_dir = self.media_dir / "frames"
         self.frames_dir.mkdir(parents=True, exist_ok=True)
         self.max_frames = max_frames
+        self.frame_interval_seconds = frame_interval_seconds
+        self.max_frame_width = max_frame_width
 
         # Configurable timeouts
         self.frame_timeout = frame_timeout or self.DEFAULT_FRAME_TIMEOUT
@@ -290,12 +299,16 @@ class VideoProcessor:
         import uuid
         output_prefix = self.frames_dir / f"{video_path.stem}_{uuid.uuid4().hex[:8]}_frame"
 
-        # Extract frames at intervals (1 frame every 5 seconds for typical videos)
-        # Using fps filter: 1/5 = 1 frame every 5 seconds
+        # Build fps filter from frame_interval_seconds
+        # fps=1/X means 1 frame every X seconds
+        fps_filter = f"fps=1/{self.frame_interval_seconds}"
+        # Scale to max width, maintain aspect ratio (-1 for height)
+        scale_filter = f"scale={self.max_frame_width}:-1"
+
         cmd = [
             "ffmpeg",
             "-i", str(video_path),
-            "-vf", "fps=1/5,scale=640:-1",  # 1 frame every 5 sec, max width 640px
+            "-vf", f"{fps_filter},{scale_filter}",
             "-vframes", str(max_frames),
             "-y",  # Overwrite output files
             f"{output_prefix}_%d.jpg"

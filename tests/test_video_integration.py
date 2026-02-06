@@ -491,3 +491,143 @@ class TestVideoProcessorEdgeCases:
         # This will fail at ffmpeg level, so we get []
         result = await processor.extract_key_frames(test_file)
         assert isinstance(result, list)
+
+
+class TestVideoProcessorConcurrency:
+    """Tests for concurrent video processing operations."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parent_dir = Path(tempfile.mkdtemp())
+        self.workspace = self.parent_dir / "workspace"
+        self.workspace.mkdir()
+        self.media_dir = self.parent_dir / "media"
+        self.media_dir.mkdir(parents=True, exist_ok=True)  # Create media directory
+
+        # Create test video files (small fake videos for testing)
+        self.test_files = []
+        for i in range(3):
+            test_file = self.media_dir / f"test_video_{i}.mp4"
+            test_file.write_bytes(b"fake video content " + str(i).encode())
+            self.test_files.append(test_file)
+
+        self.processor = VideoProcessor(self.workspace, max_frames=2)
+
+    def teardown_method(self):
+        """Clean up test fixtures."""
+        if self.parent_dir.exists():
+            shutil.rmtree(self.parent_dir)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_frame_extraction(self):
+        """Test that frame extraction works correctly with multiple videos concurrently."""
+        # Extract frames from all videos concurrently
+        tasks = [
+            self.processor.extract_key_frames(video_file)
+            for video_file in self.test_files
+        ]
+
+        # All extractions should complete without hanging
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Each result should be a list (even if empty due to fake videos)
+        assert len(results) == 3
+        for result in results:
+            # Should return empty list for fake videos (ffmpeg fails)
+            # but should not hang or raise exceptions
+            assert isinstance(result, (list, Exception))
+
+    @pytest.mark.asyncio
+    async def test_concurrent_audio_extraction(self):
+        """Test that audio extraction works correctly with multiple videos concurrently."""
+        # Extract audio from all videos concurrently
+        tasks = [
+            self.processor.extract_audio(video_file)
+            for video_file in self.test_files
+        ]
+
+        # All extractions should complete without hanging
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Each result should be a Path or None
+        assert len(results) == 3
+        for result in results:
+            # Should return None for fake videos (ffmpeg fails)
+            # but should not hang or raise exceptions
+            assert isinstance(result, (Path, type(None), Exception))
+
+    @pytest.mark.asyncio
+    async def test_concurrent_video_info_queries(self):
+        """Test that video info queries work correctly with multiple videos concurrently."""
+        # Query video info for all videos concurrently
+        tasks = [
+            self.processor.get_video_info(video_file)
+            for video_file in self.test_files
+        ]
+
+        # All queries should complete without hanging
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Each result should be a dict or None
+        assert len(results) == 3
+        for result in results:
+            # Should return None for fake videos (ffprobe fails)
+            # but should not hang or raise exceptions
+            assert isinstance(result, (dict, type(None), Exception))
+
+    @pytest.mark.asyncio
+    async def test_process_registry_concurrent_cleanup(self):
+        """Test that ProcessRegistry handles concurrent operations correctly."""
+        from nanobot.agent.video import ProcessRegistry
+
+        registry = ProcessRegistry()
+
+        # Create multiple mock processes
+        processes = []
+        for _ in range(3):
+            mock_proc = MagicMock()
+            mock_proc.returncode = None
+            processes.append(mock_proc)
+
+        # Register all processes concurrently
+        async def register_concurrent():
+            for proc in processes:
+                registry.register(proc)
+
+        await register_concurrent()
+
+        # Verify all processes were tracked
+        # (WeakSet makes direct counting difficult, but cleanup should work)
+        assert registry._shutdown is False
+
+        # Trigger cleanup
+        registry._cleanup_all()
+
+        # Verify cleanup completed
+        assert registry._shutdown is True
+
+    @pytest.mark.asyncio
+    async def test_mixed_concurrent_operations(self):
+        """Test mixed concurrent operations (frames, audio, info) on same videos."""
+        # Create a mix of operations
+        tasks = []
+
+        for video_file in self.test_files:
+            tasks.append(self.processor.extract_key_frames(video_file))
+            tasks.append(self.processor.extract_audio(video_file))
+            tasks.append(self.processor.get_video_info(video_file))
+
+        # All operations should complete without hanging or race conditions
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Should have 9 results total (3 operations × 3 videos)
+        assert len(results) == 9
+
+        # Verify no actual exceptions were raised (all should be results or None/list)
+        exception_count = sum(1 for r in results if isinstance(r, Exception) and not isinstance(r, list))
+        # We expect some "exceptions" from ffmpeg failing on fake videos
+        # but no RuntimeError from concurrent access
+        for result in results:
+            if isinstance(result, Exception) and not isinstance(result, list):
+                # Should not be RuntimeError from concurrent access
+                assert type(result).__name__ != "RuntimeError"

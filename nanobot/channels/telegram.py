@@ -108,6 +108,8 @@ class TelegramChannel(BaseChannel):
         groq_api_key: str = "",
         tts_provider: TTSProvider | None = None,
         max_video_frames: int = 5,
+        video_frame_interval: float = 5.0,
+        video_max_frame_width: int = 640,
         workspace: Path | None = None,
         cleanup_registry: MediaCleanupRegistry | None = None,
     ):
@@ -120,6 +122,8 @@ class TelegramChannel(BaseChannel):
             groq_api_key: Groq API key for transcription.
             tts_provider: Optional TTS provider for voice output.
             max_video_frames: Maximum frames to extract from videos.
+            video_frame_interval: Seconds between frame extractions.
+            video_max_frame_width: Maximum width for extracted frames (pixels).
             workspace: Workspace path for video processing.
             cleanup_registry: Optional media cleanup registry.
         """
@@ -133,10 +137,25 @@ class TelegramChannel(BaseChannel):
         self._app: Application | None = None
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
         # Initialize VideoProcessor upfront if ffmpeg is available
-        self._video_processor = VideoProcessor(self._workspace, max_frames=max_video_frames) if VideoProcessor.is_ffmpeg_available() else None
-        # Rate limiters are created per-channel-instance (not global singletons).
-        # Each TelegramChannel has independent rate limit quotas.
-        # If you want global rate limiting across all channels, inject shared instances.
+        self._video_processor = VideoProcessor(
+            self._workspace,
+            max_frames=max_video_frames,
+            frame_interval_seconds=video_frame_interval,
+            max_frame_width=video_max_frame_width,
+        ) if VideoProcessor.is_ffmpeg_available() else None
+
+        # Rate limiter scoping: Each channel instance gets independent rate limiters.
+        # This means rate quotas are enforced per-channel, not globally.
+        #
+        # Current behavior (per-channel):
+        # - Each TelegramChannel instance has its own TTS/transcription/video quota
+        # - Multiple bot instances = multiple independent quotas
+        # - Users can bypass limits by using different channels
+        #
+        # To implement global rate limiting:
+        # 1. Create singleton limiters in ChannelManager
+        # 2. Inject them as parameters to channel constructors
+        # 3. See CLAUDE.md for detailed trade-offs and implementation guide
         self._tts_rate_limiter = tts_rate_limiter()
         self._transcription_rate_limiter = transcription_rate_limiter()
         self._video_rate_limiter = video_rate_limiter()
@@ -313,7 +332,7 @@ class TelegramChannel(BaseChannel):
         # Atomic rename
         temp_path.rename(final_path)
 
-        # Register for cleanup
+        # Register for cleanup BEFORE sending (prevents leak if send fails)
         if self._cleanup_registry:
             self._cleanup_registry.register(final_path)
 
@@ -324,6 +343,14 @@ class TelegramChannel(BaseChannel):
             logger.debug(f"Voice message sent to {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send voice message: {e}")
+            # Clean up the leaked file immediately since send failed
+            if self._cleanup_registry:
+                self._cleanup_registry.unregister(final_path)
+            try:
+                final_path.unlink()
+                logger.debug("Cleaned up leaked voice file after send failure")
+            except Exception as cleanup_error:
+                logger.debug(f"Failed to clean up leaked voice file: {cleanup_error}")
             # Fallback to text
             await self._app.bot.send_message(chat_id=chat_id, text=text)
 
@@ -393,7 +420,16 @@ class TelegramChannel(BaseChannel):
                 if file_size:
                     is_allowed, error_msg = self._check_file_size_limit(media_type, file_size)
                     if not is_allowed:
-                        logger.warning(f"File size check failed: {error_msg}")
+                        logger.warning(
+                            f"File size check failed for {media_type}: {error_msg}",
+                            extra={
+                                "user_id": sender_id,
+                                "chat_id": str(chat_id),
+                                "media_type": media_type,
+                                "file_size": file_size,
+                                "file_id": media_file.file_id[:16] if media_file else None,
+                            }
+                        )
                         content_parts.append(f"[{media_type}: {error_msg}]")
                         # Skip to next message part
                         raise ValueError(error_msg)
@@ -426,7 +462,16 @@ class TelegramChannel(BaseChannel):
                     # Check video rate limit
                     is_allowed, error_msg = self._video_rate_limiter.is_allowed(sender_id)
                     if not is_allowed:
-                        logger.warning(f"Video rate limit exceeded: {error_msg}")
+                        logger.warning(
+                            f"Video rate limit exceeded: {error_msg}",
+                            extra={
+                                "user_id": sender_id,
+                                "chat_id": str(chat_id),
+                                "media_type": media_type,
+                                "video_path": str(file_path),
+                                "file_size": file_size if 'file_size' in locals() else None,
+                            }
+                        )
                         content_parts.append(f"[video processing: {error_msg}]")
                         # Skip processing but add file path to media
                         media_paths.append(str(file_path))
@@ -459,7 +504,15 @@ class TelegramChannel(BaseChannel):
                                 # Check transcription rate limit
                                 is_allowed, error_msg = self._transcription_rate_limiter.is_allowed(sender_id)
                                 if not is_allowed:
-                                    logger.warning(f"Transcription rate limit exceeded: {error_msg}")
+                                    logger.warning(
+                                        f"Transcription rate limit exceeded: {error_msg}",
+                                        extra={
+                                            "user_id": sender_id,
+                                            "chat_id": str(chat_id),
+                                            "media_type": "video_audio",
+                                            "video_path": str(file_path),
+                                        }
+                                    )
                                     content_parts.append(f"[video audio: {error_msg}]")
                                 else:
                                     from nanobot.providers.transcription import (
@@ -482,7 +535,15 @@ class TelegramChannel(BaseChannel):
                     # Check transcription rate limit
                     is_allowed, error_msg = self._transcription_rate_limiter.is_allowed(sender_id)
                     if not is_allowed:
-                        logger.warning(f"Transcription rate limit exceeded: {error_msg}")
+                        logger.warning(
+                            f"Transcription rate limit exceeded: {error_msg}",
+                            extra={
+                                "user_id": sender_id,
+                                "chat_id": str(chat_id),
+                                "media_type": media_type,
+                                "audio_path": str(file_path),
+                            }
+                        )
                         content_parts.append(f"[{media_type}: {error_msg}]")
                     else:
                         from nanobot.providers.transcription import GroqTranscriptionProvider
@@ -500,7 +561,20 @@ class TelegramChannel(BaseChannel):
 
                 logger.debug(f"Downloaded {media_type} to {file_path}")
             except Exception as e:
-                logger.error(f"Failed to download media: {e}")
+                # Structured error logging with context for debugging
+                logger.error(
+                    "Media download failed",
+                    extra={
+                        "channel": "telegram",
+                        "user_id": sender_id,
+                        "chat_id": str(chat_id),
+                        "media_type": media_type,
+                        "file_id": media_file.file_id if media_file else None,
+                        "file_size": file_size if 'file_size' in locals() else None,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    }
+                )
                 content_parts.append(f"[{media_type}: download failed]")
 
         content = "\n".join(content_parts) if content_parts else "[empty message]"

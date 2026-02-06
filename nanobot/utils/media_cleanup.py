@@ -125,6 +125,57 @@ class MediaCleanupRegistry:
         with self._cleanup_lock:
             self._registered_files.discard(Path(file_path))
 
+    def cleanup_now(self) -> int:
+        """
+        Immediately clean up all registered files and stop background cleanup.
+
+        This method provides explicit cleanup control for graceful shutdown scenarios.
+        It can be called directly by application code (e.g., in ChannelManager.stop_all())
+        rather than relying solely on the atexit handler.
+
+        Thread-safe: Uses locks to prevent race conditions.
+
+        Returns:
+            Total number of files cleaned up (registered + old files).
+        """
+        # Stop periodic cleanup thread first
+        try:
+            self.stop_periodic_cleanup()
+        except Exception:
+            pass  # Ignore errors during shutdown
+
+        # Get list of files to clean up (work on copy to avoid holding lock)
+        with self._cleanup_lock:
+            files_to_cleanup = list(self._registered_files)
+
+        cleaned = 0
+        errors = 0
+
+        # Clean up registered files
+        for file_path in files_to_cleanup:
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+                    cleaned += 1
+                    logger.debug(f"Cleaned up registered file: {file_path.name}")
+            except Exception as e:
+                errors += 1
+                logger.debug(f"Failed to cleanup {file_path.name}: {e}")
+
+        # Clear the registry after cleanup
+        with self._cleanup_lock:
+            self._registered_files.clear()
+
+        if cleaned > 0:
+            logger.info(f"Explicit cleanup: {cleaned} registered files (errors: {errors})")
+
+        # Also cleanup old files in media directory
+        old_files = self.cleanup_old_files()
+        if old_files > 0:
+            logger.info(f"Explicit cleanup: removed {old_files} old files")
+
+        return cleaned + old_files
+
     def cleanup_old_files(self, max_age_hours: float | None = None) -> int:
         """
         Clean up files older than max_age_hours.

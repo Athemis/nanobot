@@ -86,6 +86,8 @@ class ChannelManager:
                     groq_api_key=self.config.providers.groq.api_key,
                     tts_provider=self._tts_provider,
                     max_video_frames=self.config.tools.multimodal.max_video_frames,
+                    video_frame_interval=self.config.tools.multimodal.video_frame_interval,
+                    video_max_frame_width=self.config.tools.multimodal.video_max_frame_width,
                     workspace=self.config.workspace_path,
                     cleanup_registry=self._cleanup_registry,
                 )
@@ -164,12 +166,13 @@ class ChannelManager:
             except Exception as e:
                 logger.error(f"Error stopping {name}: {e}")
 
-        # Stop media cleanup registry
+        # Stop media cleanup registry and clean up files
         if self._cleanup_registry:
             try:
-                self._cleanup_registry.stop_periodic_cleanup()
+                cleaned = self._cleanup_registry.cleanup_now()
+                logger.info(f"Cleaned up {cleaned} media files on shutdown")
             except Exception as e:
-                logger.error(f"Error stopping media cleanup: {e}")
+                logger.error(f"Error during media cleanup: {e}")
 
     async def _dispatch_outbound(self) -> None:
         """Dispatch outbound messages to the appropriate channel."""
