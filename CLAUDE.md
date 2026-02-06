@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Run `bash core_agent_lines.sh` to verify the current line count. The script counts lines in: agent/, agent/tools/, bus/, config/, cron/, heartbeat/, session/, utils/, plus root files.
 
-Current line count: **4,919 lines** (as of 2026-02-06)
+Current line count: **4,874 lines** (as of 2026-02-06)
 
 **Provider Agnostic**: The agent supports multiple LLM providers (OpenRouter, Anthropic, OpenAI, Gemini, Groq, DeepSeek, Zhipu, vLLM, Moonshot) through a unified LiteLLM interface. Provider selection is automatic based on model name keywords in `Config._match_provider()`.
 
@@ -111,7 +111,7 @@ nanobot status
 
 nanobot is an ultra-lightweight AI assistant framework (~4,900 lines). The architecture is built around a message bus that decouples communication channels from the agent processing loop.
 
-Current core agent: **4,919 lines** (run `bash core_agent_lines.sh` to verify)
+Current core agent: **4,874 lines** (run `bash core_agent_lines.sh` to verify)
 
 ### Core Components
 
@@ -294,6 +294,53 @@ if not allowed:
 ```
 
 **Note**: Rate limiters now include TTL-based cleanup to prevent memory exhaustion from unbounded user ID growth. Use factory functions (`tts_rate_limiter()`, `transcription_rate_limiter()`, `video_rate_limiter()`) instead of direct class instantiation.
+
+**Rate Limiter Scoping (Per-Channel vs Global)**
+
+**Current Behavior:**
+- Each channel instance creates independent rate limiters (TTS, transcription, video)
+- Rate limits are enforced **per-channel**, not globally across all channels
+- Example: If you have 2 Telegram bot instances, each gets 10 TTS requests/minute independently
+
+**Trade-offs:**
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| **Per-channel** (current) | - Isolated failure (one channel doesn't affect others)<br>- Simpler initialization<br>- Fair resource distribution | - No global quota enforcement<br>- Users can bypass limits by using multiple channels |
+| **Global/shared** | - Consistent quotas across all channels<br>- Prevents limit bypass<br>- Better resource control | - Shared state complexity<br>- One channel can affect others<br>- Requires coordination |
+
+**How to Implement Global Rate Limiting (Optional):**
+
+If you need global rate limiting across all channels:
+
+1. **Create singleton limiters in ChannelManager:**
+   ```python
+   # In ChannelManager.__init__()
+   self._tts_rate_limiter = tts_rate_limiter()  # Singleton
+   self._transcription_rate_limiter = transcription_rate_limiter()
+   self._video_rate_limiter = video_rate_limiter()
+   ```
+
+2. **Inject shared limiters into channels:**
+   ```python
+   # Pass to TelegramChannel, DiscordChannel, etc.
+   TelegramChannel(
+       ...,
+       tts_rate_limiter=self._tts_rate_limiter,  # Shared
+       ...
+   )
+   ```
+
+3. **Update channel constructors** to accept optional rate limiter parameters
+
+**Configuration (Future):**
+
+A config option may be added in future versions:
+```yaml
+tools:
+  multimodal:
+    global_rate_limiting: false  # Set to true for shared limiters
+```
 
 ## Adding New Channels
 
@@ -494,7 +541,7 @@ The codebase includes multi-modal capabilities that are disabled by default and 
 
 ## Line Count Philosophy
 
-The project maintains an ultra-lightweight codebase. Run `bash core_agent_lines.sh` to verify the current line count. The core agent (excluding channels/, cli/, providers/) is currently **4,919 lines**.
+The project maintains an ultra-lightweight codebase. Run `bash core_agent_lines.sh` to verify the current line count. The core agent (excluding channels/, cli/, providers/) is currently **4,874 lines**.
 
 **When making changes:**
 - Prefer adding optional features over core complexity
