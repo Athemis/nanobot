@@ -1,5 +1,6 @@
 """Rate limiting utilities for API calls."""
 
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -27,10 +28,8 @@ class RateLimiter:
     - Total entries are limited to max_entries (LRU eviction)
     - Cleanup runs periodically to prevent memory exhaustion
 
-    Thread-safety: This class is designed for use in async contexts.
-    While not fully thread-safe, Python's GIL provides protection for
-    simple dict operations. For high-concurrency scenarios, consider
-    adding asyncio locks.
+    Thread-safety: Uses threading.Lock to protect _state dictionary access,
+    preventing RuntimeError during dictionary iteration when cleanup runs.
     """
 
     # Cleanup runs every CLEANUP_INTERVAL calls to avoid overhead on every request
@@ -63,6 +62,7 @@ class RateLimiter:
         # This prevents memory leaks from spurious user_ids and makes access explicit
         self._state: dict[str, RateLimitEntry] = {}
         self._access_count = 0  # Track accesses to trigger periodic cleanup
+        self._lock = threading.Lock()  # Protect _state from concurrent access
 
     def is_allowed(self, user_id: str) -> tuple[bool, str | None]:
         """
@@ -76,52 +76,56 @@ class RateLimiter:
         """
         now = time.time()
 
-        # Periodic cleanup to prevent memory exhaustion
-        self._access_count += 1
-        if self._access_count >= self.CLEANUP_INTERVAL:
-            self._cleanup(now)
-            self._access_count = 0
+        with self._lock:
+            # Periodic cleanup to prevent memory exhaustion
+            self._access_count += 1
+            if self._access_count >= self.CLEANUP_INTERVAL:
+                self._cleanup(now)
+                self._access_count = 0
 
-        # Get or create entry explicitly (not using defaultdict)
-        entry = self._state.get(user_id)
-        if entry is None:
-            entry = RateLimitEntry()
-            self._state[user_id] = entry
+            # Get or create entry explicitly (not using defaultdict)
+            entry = self._state.get(user_id)
+            if entry is None:
+                entry = RateLimitEntry()
+                self._state[user_id] = entry
 
-        # Update last accessed time
-        entry.last_accessed = now
+            # Update last accessed time
+            entry.last_accessed = now
 
-        # Check if user is currently blocked
-        if now < entry.blocked_until:
-            remaining = int(entry.blocked_until - now)
-            return False, f"Rate limit exceeded. Try again in {remaining}s."
+            # Check if user is currently blocked
+            if now < entry.blocked_until:
+                remaining = int(entry.blocked_until - now)
+                return False, f"Rate limit exceeded. Try again in {remaining}s."
 
-        # Reset window if expired
-        if now - entry.window_start >= self.window_seconds:
-            entry.request_count = 0
-            entry.window_start = now
+            # Reset window if expired
+            if now - entry.window_start >= self.window_seconds:
+                entry.request_count = 0
+                entry.window_start = now
 
-        # Check if within limit
-        if entry.request_count >= self.max_requests:
-            # Block the user
-            entry.blocked_until = now + self.block_duration
-            logger.warning(
-                f"Rate limit exceeded for user {user_id}. "
-                f"Blocking for {self.block_duration}s."
+            # Check if within limit
+            if entry.request_count >= self.max_requests:
+                # Block the user
+                entry.blocked_until = now + self.block_duration
+                logger.warning(
+                    f"Rate limit exceeded for user {user_id}. "
+                    f"Blocking for {self.block_duration}s."
+                )
+                return False, f"Rate limit exceeded ({self.max_requests} requests/{self.window_seconds}s)."
+
+            # Allow the request
+            entry.request_count += 1
+            logger.debug(
+                f"Rate limit: {user_id} at {entry.request_count}/{self.max_requests} "
+                f"requests this window"
             )
-            return False, f"Rate limit exceeded ({self.max_requests} requests/{self.window_seconds}s)."
-
-        # Allow the request
-        entry.request_count += 1
-        logger.debug(
-            f"Rate limit: {user_id} at {entry.request_count}/{self.max_requests} "
-            f"requests this window"
-        )
-        return True, None
+            return True, None
 
     def _cleanup(self, now: float) -> None:
         """
         Clean up expired and excess entries to prevent memory exhaustion.
+
+        Note: This method assumes self._lock is already held by the caller.
+        It is only called from within is_allowed() which holds the lock.
 
         Args:
             now: Current timestamp from time.time().
@@ -164,14 +168,17 @@ class RateLimiter:
         """
         Reset rate limit state.
 
+        Thread-safe: Acquires lock before modifying state.
+
         Args:
             user_id: Specific user to reset, or None to reset all.
         """
-        if user_id:
-            if user_id in self._state:
-                del self._state[user_id]
-        else:
-            self._state.clear()
+        with self._lock:
+            if user_id:
+                if user_id in self._state:
+                    del self._state[user_id]
+            else:
+                self._state.clear()
 
 
 # Predefined rate limiter configurations for common use cases

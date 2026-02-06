@@ -1,5 +1,6 @@
 """Context builder for assembling agent prompts."""
 
+import asyncio
 import base64
 import mimetypes
 import platform
@@ -122,7 +123,7 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
 
         return "\n\n".join(parts) if parts else ""
 
-    def build_messages(
+    async def build_messages(
         self,
         history: list[dict[str, Any]],
         current_message: str,
@@ -157,14 +158,16 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
         messages.extend(history)
 
         # Current message (with optional image attachments)
-        user_content = self._build_user_content(current_message, media)
+        user_content = await self._build_user_content(current_message, media)
         messages.append({"role": "user", "content": user_content})
 
         return messages
 
-    def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
+    async def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """
         Build user message content with optional base64-encoded images.
+
+        Uses asyncio.to_thread for file I/O to avoid blocking the event loop.
 
         Returns warnings for skipped images to inform the user.
         """
@@ -198,9 +201,11 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
                 warnings.append(f"⚠️ Image too large ({file_size / 1024 / 1024:.1f}MB): {path}")
                 continue
 
-            # Encode to base64 (read in one operation - Python handles memory efficiently)
+            # Encode to base64 using async I/O to avoid blocking event loop
             try:
-                b64 = base64.b64encode(p.read_bytes()).decode()
+                # Read file in thread pool to avoid blocking
+                file_bytes = await asyncio.to_thread(p.read_bytes)
+                b64 = base64.b64encode(file_bytes).decode()
                 images.append({
                     "type": "image_url",
                     "image_url": {"url": f"data:{mime};base64,{b64}"}

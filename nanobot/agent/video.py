@@ -172,6 +172,33 @@ class VideoProcessor:
 
         return True, None
 
+    def _validate_path_before_use(self, video_path: Path) -> None:
+        """
+        Validate a video path immediately before use (TOCTOU protection).
+
+        This should be called right before passing the path to ffmpeg/fprobe
+        to prevent time-of-check-time-of-use race conditions.
+
+        Args:
+            video_path: Path to validate.
+
+        Raises:
+            ValueError: If path is invalid or outside allowed directories.
+        """
+        try:
+            resolved = video_path.resolve()
+        except Exception as e:
+            raise ValueError(f"Invalid path: {e}")
+
+        allowed_dirs = [self.media_dir.resolve(), self.workspace.resolve()]
+        is_allowed = any(
+            resolved.is_relative_to(allowed_dir)
+            for allowed_dir in allowed_dirs
+        )
+
+        if not is_allowed:
+            raise ValueError(f"Path outside allowed directories: {resolved}")
+
     async def _run_subprocess(
         self,
         cmd: list[str],
@@ -275,6 +302,8 @@ class VideoProcessor:
         ]
 
         try:
+            # Re-validate path right before subprocess call (TOCTOU protection)
+            self._validate_path_before_use(video_path)
             stdout, stderr, returncode = await self._run_subprocess(cmd, self.frame_timeout)
 
             if returncode != 0:
@@ -350,6 +379,8 @@ class VideoProcessor:
         ]
 
         try:
+            # Re-validate path right before subprocess call (TOCTOU protection)
+            self._validate_path_before_use(video_path)
             stdout, stderr, returncode = await self._run_subprocess(cmd, self.audio_timeout)
 
             if returncode == 0 and output_path.exists():
@@ -402,6 +433,8 @@ class VideoProcessor:
         ]
 
         try:
+            # Re-validate path right before subprocess call (TOCTOU protection)
+            self._validate_path_before_use(video_path)
             stdout, stderr, returncode = await self._run_subprocess(cmd, self.info_timeout)
 
             if returncode == 0:

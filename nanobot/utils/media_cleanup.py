@@ -6,7 +6,6 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Callable
 
 from loguru import logger
 
@@ -140,8 +139,8 @@ class MediaCleanupRegistry:
         """
         Clean up files older than max_age_hours.
 
-        Scans the entire media directory recursively and removes old files.
-        Safe to call multiple times - idempotent operation.
+        Optimized to use os.scandir() for better performance with large directories.
+        Skips subdirectories whose mtime indicates they contain only recent files.
 
         Args:
             max_age_hours: Override default max age.
@@ -149,38 +148,76 @@ class MediaCleanupRegistry:
         Returns:
             Number of files cleaned up.
         """
+        import os
+
         max_age = max_age_hours or self.max_age_hours
         max_age_seconds = max_age * 3600
         now = time.time()
         cleaned = 0
         errors = 0
+        scanned = 0
 
         if not self.media_dir.exists():
             logger.debug(f"Media directory does not exist: {self.media_dir}")
             return 0
 
-        try:
-            for file_path in self.media_dir.rglob("*"):
-                if not file_path.is_file():
-                    continue
+        def scan_directory(dir_path: Path) -> None:
+            """Recursively scan directory for old files."""
+            nonlocal cleaned, errors, scanned
 
-                try:
-                    file_age = now - file_path.stat().st_mtime
-                    if file_age > max_age_seconds:
-                        file_path.unlink()
-                        cleaned += 1
-                        logger.debug(f"Cleaned up old file: {file_path.name}")
-                except Exception as e:
-                    errors += 1
-                    logger.warning(f"Failed to cleanup {file_path.name}: {e}")
+            try:
+                # Use os.scandir for better performance than Path.rglob
+                with os.scandir(dir_path) as entries:
+                    for entry in entries:
+                        if self._shutdown:
+                            return
+
+                        if entry.is_file(follow_symlinks=False):
+                            scanned += 1
+                            try:
+                                # Check file age via stat
+                                stat = entry.stat()
+                                file_age = now - stat.st_mtime
+                                if file_age > max_age_seconds:
+                                    try:
+                                        Path(entry.path).unlink()
+                                        cleaned += 1
+                                        logger.debug(f"Cleaned up old file: {entry.name}")
+                                    except Exception as e:
+                                        errors += 1
+                                        logger.warning(f"Failed to cleanup {entry.name}: {e}")
+                            except OSError as e:
+                                errors += 1
+                                logger.debug(f"Failed to stat {entry.name}: {e}")
+
+                        elif entry.is_dir(follow_symlinks=False):
+                            # Optimization: Check directory mtime before recursing
+                            try:
+                                dir_stat = entry.stat()
+                                dir_age = now - dir_stat.st_mtime
+                                # If directory itself is older than max_age, scan it
+                                # If directory is recent, skip if all files would be recent
+                                if dir_age > max_age_seconds / 2:
+                                    # Directory is old enough to potentially contain old files
+                                    scan_directory(Path(entry.path))
+                            except OSError:
+                                # Can't stat directory, skip it
+                                pass
+            except (OSError, PermissionError) as e:
+                logger.debug(f"Error scanning directory {dir_path}: {e}")
+
+        try:
+            scan_directory(self.media_dir)
 
             if cleaned > 0:
                 logger.info(
                     f"Cleaned up {cleaned} old media files "
-                    f"(older than {max_age}h, errors: {errors})"
+                    f"(scanned {scanned} files, older than {max_age}h, errors: {errors})"
                 )
             elif errors > 0:
-                logger.debug(f"Cleanup scan complete with {errors} errors")
+                logger.debug(f"Cleanup scan complete (scanned {scanned} files, {errors} errors)")
+            else:
+                logger.debug(f"Cleanup scan complete (scanned {scanned} files, none to clean)")
 
         except Exception as e:
             logger.error(f"Error during cleanup scan: {e}")

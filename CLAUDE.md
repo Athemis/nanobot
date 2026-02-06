@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Philosophy
 
-**Ultra-Lightweight**: nanobot maintains a core agent codebase of ~4,300 lines (excluding channels/, cli/, providers/). This is by design — the project prioritizes simplicity and readability over feature completeness. When adding features, consider whether they align with this philosophy or if they should be optional/external.
+**Ultra-Lightweight**: nanobot maintains a core agent codebase of ~4,800 lines (excluding channels/, cli/, providers/). This is by design — the project prioritizes simplicity and readability over feature completeness. When adding features, consider whether they align with this philosophy or if they should be optional/external.
 
 Run `bash core_agent_lines.sh` to verify the current line count. The script counts lines in: agent/, agent/tools/, bus/, config/, cron/, heartbeat/, session/, utils/, plus root files.
 
-Current line count: **4,355 lines** (as of latest commit)
+Current line count: **4,833 lines** (as of 2026-02-06)
 
 **Provider Agnostic**: The agent supports multiple LLM providers (OpenRouter, Anthropic, OpenAI, Gemini, Groq, DeepSeek, Zhipu, vLLM, Moonshot) through a unified LiteLLM interface. Provider selection is automatic based on model name keywords in `Config._match_provider()`.
 
@@ -109,9 +109,9 @@ nanobot status
 
 ## Architecture Overview
 
-nanobot is an ultra-lightweight AI assistant framework (~4,300 lines). The architecture is built around a message bus that decouples communication channels from the agent processing loop.
+nanobot is an ultra-lightweight AI assistant framework (~4,800 lines). The architecture is built around a message bus that decouples communication channels from the agent processing loop.
 
-Current core agent: **4,355 lines** (run `bash core_agent_lines.sh` to verify)
+Current core agent: **4,833 lines** (run `bash core_agent_lines.sh` to verify)
 
 ### Core Components
 
@@ -195,9 +195,11 @@ Current core agent: **4,355 lines** (run `bash core_agent_lines.sh` to verify)
 - `SessionManager` - Per-channel conversation history persistence
 
 **Utilities** (`nanobot/utils/`)
-- `MediaCleanupRegistry` - Automatic cleanup of temporary media files on exit
-- `RateLimiter` - Token-bucket rate limiting for API quotas (TTS, transcription)
+- `MediaCleanupRegistry` - Automatic cleanup of temporary media files on exit with signal handlers
+- `RateLimiter` - Token-bucket rate limiting with TTL-based cleanup to prevent memory exhaustion
+- `ProcessRegistry` - Tracks spawned subprocess processes for graceful cleanup on shutdown
 - `helpers` - Path resolution and workspace management utilities
+- Factory functions: `get_cleanup_registry()`, `tts_rate_limiter()`, `transcription_rate_limiter()`, `video_rate_limiter()`
 
 ### Message Flow Architecture
 
@@ -264,19 +266,34 @@ When processing temporary media (video frames, audio extracts, etc.), use `Media
 from nanobot.utils import get_cleanup_registry
 
 registry = get_cleanup_registry()
-registry.register(temp_file_path)  # Cleaned up on process exit
+registry.register(temp_file_path)  # Cleaned up on process exit or signal
 ```
 
-**Rate Limiting Pattern**
-For expensive operations (TTS, transcription), use rate limiters to prevent abuse:
-```python
-from nanobot.utils import TTSRateLimiter
+The registry now includes signal handlers (SIGTERM, SIGINT) and periodic background cleanup for reliability.
 
-limiter = TTSRateLimiter()
+**Process Registry Pattern**
+When spawning subprocesses (e.g., ffmpeg for video processing), track them with `ProcessRegistry`:
+```python
+from nanobot.agent.video import get_process_registry
+
+registry = get_process_registry()
+registry.register(process)  # Automatically cleaned up on exit
+```
+
+This prevents zombie processes and resource leaks. All processes are killed on shutdown via signal handlers.
+
+**Rate Limiting Pattern**
+For expensive operations (TTS, transcription, video), use rate limiters to prevent abuse:
+```python
+from nanobot.utils import tts_rate_limiter
+
+limiter = tts_rate_limiter()  # Factory function (recommended)
 allowed, error = limiter.is_allowed(user_id)
 if not allowed:
     return error  # Rate limit exceeded
 ```
+
+**Note**: Rate limiters now include TTL-based cleanup to prevent memory exhaustion from unbounded user ID growth. Use factory functions (`tts_rate_limiter()`, `transcription_rate_limiter()`, `video_rate_limiter()`) instead of direct class instantiation.
 
 ## Adding New Channels
 
@@ -342,6 +359,32 @@ The user workspace (`~/.nanobot/` by default) contains:
 - `HEARTBEAT.md` - Tasks for periodic heartbeat service
 
 ## Security
+
+**Recent Security Improvements** (2026-02-06)
+The multi-modal support feature introduced several critical security issues that were subsequently addressed:
+
+**API Key Race Condition Fixed:**
+- Fixed LiteLLMProvider API key race condition where multiple instances would overwrite `os.environ`
+- API keys are now passed directly to litellm instead of environment variables
+- Prevents credential leakage between concurrent requests
+
+**Memory Exhaustion Prevention:**
+- Added TTL-based cleanup to RateLimiter (`max_age_seconds`, `max_entries`)
+- Prevents DoS from unbounded user ID growth in rate limiter state
+- Thread-safe implementation using explicit dict operations
+
+**Process Management:**
+- Implemented ProcessRegistry for tracking spawned ffmpeg/ffprobe processes
+- Added signal handlers (SIGTERM, SIGINT) for graceful process cleanup
+- Prevents zombie processes and resource leaks
+- All video processing now uses tracked subprocess management
+
+**Media Cleanup Reliability:**
+- Enhanced MediaCleanupRegistry with signal handlers
+- Added periodic background cleanup for temporary files
+- Thread-safe file registration with monitoring
+
+See `CODE_REVIEW_ISSUES.md` for detailed analysis of security issues and fixes.
 
 **Workspace Restriction** (`tools.restrict_to_workspace`)
 When `true`, all file and shell tools are restricted to the workspace directory. This provides sandboxing for production deployments. See SECURITY.md for comprehensive security guidelines.
@@ -426,13 +469,17 @@ The codebase includes multi-modal capabilities that are disabled by default and 
 - OpenAI TTS integration for voice output
 - `VoiceTool` for enabling/disabling voice mode
 - Configuration: `tools.multimodal.tts.enabled`, `tools.multimodal.tts.provider`, `tools.multimodal.tts.voice`
+- Additional options: `model` (default: "tts-1"), `max_text_length` (default: 4000), `timeout` (default: 60)
 - **Pattern**: TTS provider is injected into channels, which check session metadata for voice mode flag
+- **Security**: Uses rate limiting (10 requests/minute per user) to prevent abuse
 
 **Video Processing** (`nanobot/agent/video.py`)
 - Frame extraction using ffmpeg for video analysis
 - Audio extraction for transcription
-- Configuration: `tools.multimodal.max_video_frames`
+- Configuration: `tools.multimodal.max_video_frames`, `tools.multimodal.video_timeout`
+- Process tracking via ProcessRegistry to prevent resource leaks
 - **Note**: Requires ffmpeg to be installed on the system
+- **Security**: Validates file paths (media/workspace only), enforces 100MB max video size
 
 **Voice Transcription** (Groq Whisper)
 - If Groq provider is configured, Telegram voice messages are automatically transcribed
@@ -447,7 +494,7 @@ The codebase includes multi-modal capabilities that are disabled by default and 
 
 ## Line Count Philosophy
 
-The project maintains an ultra-lightweight codebase. Run `bash core_agent_lines.sh` to verify the current line count. The core agent (excluding channels/, cli/, providers/) is currently **4,355 lines**.
+The project maintains an ultra-lightweight codebase. Run `bash core_agent_lines.sh` to verify the current line count. The core agent (excluding channels/, cli/, providers/) is currently **4,833 lines**.
 
 **When making changes:**
 - Prefer adding optional features over core complexity
