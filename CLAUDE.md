@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Run `bash core_agent_lines.sh` to verify the current line count. The script counts lines in: agent/, agent/tools/, bus/, config/, cron/, heartbeat/, session/, utils/, plus root files.
 
-Current line count: **4,915 lines** (as of 2026-02-06)
+Current line count: **4,919 lines** (as of 2026-02-06)
 
 **Provider Agnostic**: The agent supports multiple LLM providers (OpenRouter, Anthropic, OpenAI, Gemini, Groq, DeepSeek, Zhipu, vLLM, Moonshot) through a unified LiteLLM interface. Provider selection is automatic based on model name keywords in `Config._match_provider()`.
 
@@ -111,7 +111,7 @@ nanobot status
 
 nanobot is an ultra-lightweight AI assistant framework (~4,900 lines). The architecture is built around a message bus that decouples communication channels from the agent processing loop.
 
-Current core agent: **4,915 lines** (run `bash core_agent_lines.sh` to verify)
+Current core agent: **4,919 lines** (run `bash core_agent_lines.sh` to verify)
 
 ### Core Components
 
@@ -494,7 +494,7 @@ The codebase includes multi-modal capabilities that are disabled by default and 
 
 ## Line Count Philosophy
 
-The project maintains an ultra-lightweight codebase. Run `bash core_agent_lines.sh` to verify the current line count. The core agent (excluding channels/, cli/, providers/) is currently **4,915 lines**.
+The project maintains an ultra-lightweight codebase. Run `bash core_agent_lines.sh` to verify the current line count. The core agent (excluding channels/, cli/, providers/) is currently **4,919 lines**.
 
 **When making changes:**
 - Prefer adding optional features over core complexity

@@ -73,15 +73,12 @@ class ProcessRegistry:
                 logger.debug(f"Error cleaning up process: {e}")
 
 
-# Global process registry
-_global_registry: ProcessRegistry | None = None
+# Global process registry (initialized at module import time for thread safety)
+_global_registry: ProcessRegistry = ProcessRegistry()
 
 
 def get_process_registry() -> ProcessRegistry:
-    """Get or create the global process registry."""
-    global _global_registry
-    if _global_registry is None:
-        _global_registry = ProcessRegistry()
+    """Get the global process registry."""
     return _global_registry
 
 
@@ -101,6 +98,10 @@ class VideoProcessor:
     DEFAULT_FRAME_TIMEOUT = 30.0
     DEFAULT_AUDIO_TIMEOUT = 30.0
     DEFAULT_INFO_TIMEOUT = 10.0
+    # Time to wait for process to terminate after SIGKILL
+    # - Most processes terminate within 100ms after kill()
+    # - 5 seconds handles edge cases (stuck in uninterruptible syscall, NFS, etc.)
+    # - This is a generous timeout to avoid hanging shutdown
     DEFAULT_PROCESS_WAIT_TIMEOUT = 5.0
 
     def __init__(

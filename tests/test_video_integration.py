@@ -160,9 +160,9 @@ class TestProcessRegistry:
 
     def setup_method(self):
         """Set up test fixtures."""
-        # Reset global state
+        # Reset global state to fresh ProcessRegistry for testing
         import nanobot.agent.video as video_module
-        video_module._global_registry = None
+        video_module._global_registry = video_module.ProcessRegistry()
 
     def teardown_method(self):
         """Clean up test fixtures."""
@@ -170,7 +170,8 @@ class TestProcessRegistry:
         if video_module._global_registry:
             # Clean up any registered processes
             video_module._global_registry._cleanup_all()
-        video_module._global_registry = None
+        # Reset to a fresh instance (not None, since we use module-level init now)
+        video_module._global_registry = video_module.ProcessRegistry()
 
     def test_get_process_registry_returns_singleton(self):
         """Test that get_process_registry returns the same instance."""

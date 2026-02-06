@@ -134,6 +134,9 @@ class TelegramChannel(BaseChannel):
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
         # Initialize VideoProcessor upfront if ffmpeg is available
         self._video_processor = VideoProcessor(self._workspace, max_frames=max_video_frames) if VideoProcessor.is_ffmpeg_available() else None
+        # Rate limiters are created per-channel-instance (not global singletons).
+        # Each TelegramChannel has independent rate limit quotas.
+        # If you want global rate limiting across all channels, inject shared instances.
         self._tts_rate_limiter = tts_rate_limiter()
         self._transcription_rate_limiter = transcription_rate_limiter()
         self._video_rate_limiter = video_rate_limiter()

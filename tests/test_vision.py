@@ -500,3 +500,65 @@ class TestRateLimiter:
 
         # Entries should not be cleaned up
         assert len(limiter._state) == 50
+
+
+class TestRateLimiterConcurrency:
+    """Test RateLimiter thread safety under concurrent access."""
+
+    def test_concurrent_access_no_errors(self):
+        """Test that concurrent access doesn't cause RuntimeError."""
+        import threading
+        from nanobot.utils.rate_limit import RateLimiter
+
+        limiter = RateLimiter(max_requests=1000, window_seconds=60)
+        errors = []
+        completed = []
+
+        def worker(worker_id: int):
+            try:
+                for i in range(100):
+                    limiter.is_allowed(f"worker{worker_id}_user{i}")
+                completed.append(worker_id)
+            except RuntimeError as e:
+                errors.append(e)
+
+        # Create 20 threads accessing the limiter concurrently
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # All workers should complete without RuntimeError
+        assert len(completed) == 20, f"Some workers failed: {errors}"
+        assert len(errors) == 0, f"Concurrent access caused errors: {errors}"
+
+    def test_concurrent_cleanup_during_access(self):
+        """Test that cleanup during concurrent access is safe."""
+        import threading
+        from nanobot.utils.rate_limit import RateLimiter
+
+        # Use short max_age to trigger frequent cleanup
+        limiter = RateLimiter(
+            max_requests=10,
+            window_seconds=60,
+            max_age_seconds=0,  # Immediate cleanup
+            max_entries=50,     # Low limit to trigger LRU eviction
+        )
+        errors = []
+
+        def worker():
+            try:
+                for i in range(100):
+                    limiter.is_allowed(f"user{i}")
+            except RuntimeError as e:
+                errors.append(e)
+
+        # Create many threads to trigger cleanup concurrently
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0, f"Concurrent cleanup caused errors: {errors}"

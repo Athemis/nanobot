@@ -1,5 +1,6 @@
 """Text-to-speech provider using multiple backends."""
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Literal
@@ -113,9 +114,8 @@ class TTSProvider:
                 )
                 response.raise_for_status()
 
-                # Write audio file
-                with open(output_path, "wb") as f:
-                    f.write(response.content)
+                # Write audio file asynchronously (non-blocking)
+                await asyncio.to_thread(output_path.write_bytes, response.content)
 
                 logger.info(
                     f"TTS audio saved to {output_path} ({len(text)} chars, "
