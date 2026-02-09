@@ -203,6 +203,11 @@ def onboard():
     
     # Create default config
     config = Config()
+    if not config.providers.openrouter.extra_headers:
+        config.providers.openrouter.extra_headers = {
+            "HTTP-Referer": "https://github.com/HKUDS/nanobot",
+            "X-Title": "nanobot",
+        }
     save_config(config)
     console.print(f"[green]✓[/green] Created config at {config_path}")
     
