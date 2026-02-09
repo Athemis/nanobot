@@ -166,7 +166,7 @@ nanobot agent -m "Hello from my local LLM!"
 
 ## 💬 Chat Apps
 
-Talk to your nanobot through Telegram, Discord, WhatsApp, or Feishu — anytime, anywhere.
+Talk to your nanobot through Telegram, Discord, WhatsApp, Feishu or Matrix(Element) — anytime, anywhere.
 
 | Channel | Setup |
 |---------|-------|
