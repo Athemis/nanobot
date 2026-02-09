@@ -89,6 +89,9 @@ class WebSearchTool(Tool):
                 return f"Using DuckDuckGo fallback (TAVILY_API_KEY missing).\n\n{ddg}"
             return await self._search_tavily(query=query, n=n)
 
+        if provider == "searxng":
+            return await self._search_searxng(query=query, n=n)
+
         brave_key = self._brave_api_key()
         if not brave_key and self.config.fallback_to_duckduckgo_on_missing_key:
             ddg = await self._search_duckduckgo(query=query, n=n)
@@ -103,6 +106,9 @@ class WebSearchTool(Tool):
 
     def _tavily_api_key(self) -> str:
         return self.config.tavily_api_key or os.environ.get("TAVILY_API_KEY", "")
+
+    def _searxng_base_url(self) -> str:
+        return self.config.searxng_base_url or os.environ.get("SEARXNG_BASE_URL", "")
 
     async def _search_brave(self, query: str, n: int) -> str:
         api_key = self._brave_api_key()
@@ -195,6 +201,39 @@ class WebSearchTool(Tool):
                     snippet = _normalize(_strip_tags(snippet_matches[i - 1]))
                     if snippet:
                         lines.append(f"   {snippet}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error: {e}"
+
+    async def _search_searxng(self, query: str, n: int) -> str:
+        base_url = self._searxng_base_url().strip()
+        if not base_url:
+            return "Error: SEARXNG_BASE_URL not configured"
+
+        endpoint = f"{base_url.rstrip('/')}/search"
+
+        try:
+            async with httpx.AsyncClient(transport=self._transport) as client:
+                r = await client.get(
+                    endpoint,
+                    params={"q": query, "format": "json"},
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=10.0,
+                )
+                r.raise_for_status()
+
+            results = r.json().get("results", [])
+            if not results:
+                return f"No results for: {query}"
+
+            lines = [f"Results for: {query}\n"]
+            for i, item in enumerate(results[:n], 1):
+                title = _normalize(_strip_tags(item.get("title", "")))
+                url = item.get("url", "")
+                snippet = _normalize(_strip_tags(item.get("content", "")))
+                lines.append(f"{i}. {title}\n   {url}")
+                if snippet:
+                    lines.append(f"   {snippet}")
             return "\n".join(lines)
         except Exception as e:
             return f"Error: {e}"

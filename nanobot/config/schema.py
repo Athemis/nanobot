@@ -162,9 +162,10 @@ class GatewayConfig(BaseModel):
 
 class WebSearchConfig(BaseModel):
     """Web search tool configuration."""
-    provider: Literal["brave", "duckduckgo", "tavily"] = "brave"
+    provider: Literal["brave", "duckduckgo", "tavily", "searxng"] = "brave"
     api_key: str = ""  # Brave Search API key
     tavily_api_key: str = ""  # Tavily API key
+    searxng_base_url: str = ""  # SearXNG base URL, e.g. https://searx.example
     fallback_to_duckduckgo_on_missing_key: bool = True
     max_results: int = 5
 

@@ -189,3 +189,77 @@ async def test_web_search_brave_missing_key_without_fallback_returns_error(
 
     result = await tool.execute(query="fallback", count=1)
     assert result == "Error: BRAVE_API_KEY not configured"
+
+
+@pytest.mark.asyncio
+async def test_web_search_searxng_provider_formats_results() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert str(request.url) == "https://searx.example/search?q=nanobot&format=json"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "title": "nanobot docs",
+                        "url": "https://example.com/nanobot",
+                        "content": "Lightweight assistant docs",
+                    }
+                ]
+            },
+        )
+
+    tool = WebSearchTool(
+        config=WebSearchConfig(
+            provider="searxng",
+            searxng_base_url="https://searx.example",
+            max_results=5,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await tool.execute(query="nanobot", count=1)
+    assert "Results for: nanobot" in result
+    assert "1. nanobot docs" in result
+    assert "https://example.com/nanobot" in result
+
+
+@pytest.mark.asyncio
+async def test_web_search_searxng_missing_base_url_returns_error() -> None:
+    tool = WebSearchTool(
+        config=WebSearchConfig(provider="searxng", searxng_base_url="", max_results=5)
+    )
+
+    result = await tool.execute(query="nanobot", count=1)
+    assert result == "Error: SEARXNG_BASE_URL not configured"
+
+
+@pytest.mark.asyncio
+async def test_web_search_searxng_uses_env_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEARXNG_BASE_URL", "https://searx.env")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert str(request.url) == "https://searx.env/search?q=nanobot&format=json"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "title": "env result",
+                        "url": "https://example.com/env",
+                        "content": "from env",
+                    }
+                ]
+            },
+        )
+
+    tool = WebSearchTool(
+        config=WebSearchConfig(provider="searxng", searxng_base_url="", max_results=5),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await tool.execute(query="nanobot", count=1)
+    assert "1. env result" in result

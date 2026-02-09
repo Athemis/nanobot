@@ -45,7 +45,7 @@ exec(command: str, working_dir: str = None) -> str
 ## Web Access
 
 ### web_search
-Search the web using the configured provider (`brave`, `duckduckgo`, or `tavily`).
+Search the web using the configured provider (`brave`, `duckduckgo`, `tavily`, or `searxng`).
 ```
 web_search(query: str, count: int = 5) -> str
 ```
@@ -56,6 +56,8 @@ Config:
 - `tools.web.search.provider` (default: `brave`)
 - Brave key: `tools.web.search.apiKey` (or `BRAVE_API_KEY`)
 - Tavily key: `tools.web.search.tavilyApiKey` (or `TAVILY_API_KEY`)
+- SearXNG base URL: `tools.web.search.searxngBaseUrl` (or `SEARXNG_BASE_URL`)
+- `searxngBaseUrl` should be the server base URL (nanobot appends `/search`)
 - `tools.web.search.fallbackToDuckduckgoOnMissingKey` (default: `true`)
 - DuckDuckGo does not require an API key.
 
