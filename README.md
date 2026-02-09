@@ -152,7 +152,7 @@ That's it! You have a working AI assistant in 2 minutes.
 
 ## 💬 Chat Apps
 
-Connect nanobot to your favorite chat platform.
+Talk to your nanobot through Telegram, Discord, WhatsApp, Feishu or Matrix(Element) — anytime, anywhere.
 
 | Channel | What you need |
 |---------|---------------|
