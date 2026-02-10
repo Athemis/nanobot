@@ -310,12 +310,15 @@ class Config(BaseSettings):
                 if spec.is_oauth or p.api_key:
                     return p, spec.name
 
-        # Fallback: gateways first, then others (follows registry order)
-        # OAuth providers are also valid fallbacks
+        # Fallback: treat key-based and OAuth providers equally, following
+        # PROVIDERS order. OAuth providers must still be explicitly configured.
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
-            if p and (spec.is_oauth or p.api_key):
+            if not p:
+                continue
+            if p.api_key or (spec.is_oauth and (p.api_base or p.extra_headers)):
                 return p, spec.name
+
         return None, None
 
     def get_provider(self, model: str | None = None) -> ProviderConfig | None:
