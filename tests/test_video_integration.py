@@ -4,11 +4,11 @@ import asyncio
 import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nanobot.agent.video import VideoProcessor, get_process_registry, MAX_VIDEO_SIZE
+from nanobot.agent.video import MAX_VIDEO_SIZE, VideoProcessor, get_process_registry
 
 
 class TestVideoProcessorIntegration:
@@ -199,11 +199,9 @@ class TestProcessRegistry:
         # Create mock processes
         mock_process1 = MagicMock()
         mock_process1.returncode = None
-        mock_process1.wait = MagicMock(return_value=None)
 
         mock_process2 = MagicMock()
         mock_process2.returncode = None
-        mock_process2.wait = MagicMock(return_value=None)
 
         registry.register(mock_process1)
         registry.register(mock_process2)
@@ -235,8 +233,8 @@ class TestProcessRegistry:
         # The process may or may not be in the WeakSet depending on GC timing
         # This is just to verify WeakSet doesn't crash
 
-    def test_process_registry_cleanup_waits_for_termination(self):
-        """Test that cleanup waits for process termination."""
+    def test_process_registry_cleanup_does_not_wait_in_sync_context(self):
+        """Sync cleanup should kill running processes without calling async wait()."""
         registry = get_process_registry()
 
         mock_process = MagicMock()
@@ -246,27 +244,22 @@ class TestProcessRegistry:
         registry.register(mock_process)
         registry._cleanup_all()
 
-        # wait should have been called with timeout keyword argument
-        mock_process.wait.assert_called_once()
-        call_args = mock_process.wait.call_args
-        assert call_args[1]["timeout"] <= 0.5  # Should be ~0.1 timeout
+        mock_process.kill.assert_called_once()
+        mock_process.wait.assert_not_called()
 
-    def test_process_registry_handles_wait_timeout(self):
-        """Test that cleanup handles wait timeout gracefully."""
+    def test_process_registry_handles_kill_errors(self):
+        """Cleanup should continue even when killing a process fails."""
         registry = get_process_registry()
 
         mock_process = MagicMock()
         mock_process.returncode = None
-        # Mock wait to raise TimeoutError
-        import asyncio
-        mock_process.wait = MagicMock(side_effect=asyncio.TimeoutError)
+        mock_process.kill = MagicMock(side_effect=RuntimeError("kill failed"))
 
         registry.register(mock_process)
 
         # Should not raise exception
         registry._cleanup_all()
 
-        # Process should still be killed
         mock_process.kill.assert_called_once()
 
 
@@ -623,8 +616,6 @@ class TestVideoProcessorConcurrency:
         # Should have 9 results total (3 operations × 3 videos)
         assert len(results) == 9
 
-        # Verify no actual exceptions were raised (all should be results or None/list)
-        exception_count = sum(1 for r in results if isinstance(r, Exception) and not isinstance(r, list))
         # We expect some "exceptions" from ffmpeg failing on fake videos
         # but no RuntimeError from concurrent access
         for result in results:

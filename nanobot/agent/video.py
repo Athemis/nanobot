@@ -57,11 +57,6 @@ class ProcessRegistry:
             try:
                 if proc.returncode is None:
                     proc.kill()
-                    # Try to wait briefly (non-blocking in atexit context)
-                    try:
-                        proc.wait(timeout=0.1)
-                    except Exception:
-                        pass
             except Exception as e:
                 logger.debug(f"Error cleaning up process: {e}")
 
