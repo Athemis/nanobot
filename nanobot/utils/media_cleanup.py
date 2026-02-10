@@ -175,13 +175,17 @@ class MediaCleanupRegistry:
             logger.info(f"Explicit cleanup: {cleaned} registered files (errors: {errors})")
 
         # Also cleanup old files in media directory
-        old_files = self.cleanup_old_files()
+        old_files = self.cleanup_old_files(force=True)
         if old_files > 0:
             logger.info(f"Explicit cleanup: removed {old_files} old files")
 
         return cleaned + old_files
 
-    def cleanup_old_files(self, max_age_hours: float | None = None) -> int:
+    def cleanup_old_files(
+        self,
+        max_age_hours: float | None = None,
+        force: bool = False,
+    ) -> int:
         """
         Clean up files older than max_age_hours.
 
@@ -190,6 +194,7 @@ class MediaCleanupRegistry:
 
         Args:
             max_age_hours: Override default max age.
+            force: Continue scanning even if shutdown was requested.
 
         Returns:
             Number of files cleaned up.
@@ -215,7 +220,7 @@ class MediaCleanupRegistry:
                 # Use os.scandir for better performance than Path.rglob
                 with os.scandir(dir_path) as entries:
                     for entry in entries:
-                        if self._shutdown:
+                        if self._shutdown and not force:
                             return
 
                         if entry.is_file(follow_symlinks=False):
@@ -339,7 +344,7 @@ class MediaCleanupRegistry:
             self._registered_files.clear()
 
         # Also cleanup old files
-        old_files = self.cleanup_old_files()
+        old_files = self.cleanup_old_files(force=True)
         if old_files > 0:
             logger.info(f"Cleanup on exit: removed {old_files} old files")
 

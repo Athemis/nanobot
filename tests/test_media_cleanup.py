@@ -119,6 +119,21 @@ class TestMediaCleanupRegistry:
         assert recent_file.exists()
         assert cleaned == 0
 
+    def test_cleanup_now_removes_old_files_after_shutdown(self):
+        """Explicit cleanup should remove old files even after shutdown was requested."""
+        old_file = self.temp_dir / "old_file.txt"
+        old_file.write_text("old content")
+
+        old_time = time.time() - (2 * 3600)
+        import os
+        os.utime(old_file, (old_time, old_time))
+
+        self.registry.stop_periodic_cleanup()
+        removed = self.registry.cleanup_now()
+
+        assert removed >= 1
+        assert not old_file.exists()
+
     def test_get_stats_returns_correct_counts(self):
         """Test that get_stats returns accurate information."""
         # Create some files (large enough to show up in MB when rounded)
