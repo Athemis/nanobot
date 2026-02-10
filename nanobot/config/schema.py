@@ -177,6 +177,9 @@ class MatrixConfig(BaseModel):
     # Max seconds to wait for sync_forever to stop gracefully before cancellation fallback.
     sync_stop_grace_seconds: int = 2
     allow_from: list[str] = Field(default_factory=list)
+    group_policy: Literal["open", "mention", "allowlist"] = "open"
+    group_allow_from: list[str] = Field(default_factory=list)
+    allow_room_mentions: bool = False
 
 
 class ChannelsConfig(BaseModel):
