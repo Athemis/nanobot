@@ -246,12 +246,11 @@ class ProvidersConfig(BaseModel):
     vllm: ProviderConfig = Field(default_factory=ProviderConfig)
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
-    aihubmix: ProviderConfig = Field(
-        default_factory=ProviderConfig
-    )  # AiHubMix API gateway
+    minimax: ProviderConfig = Field(default_factory=ProviderConfig)
+    aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
     openai_codex: OpenAICodexConfig = Field(
         default_factory=OpenAICodexConfig
-    )  # OpenAI Codex (OAuth)  # AiHubMix API gateway
+    )  # OpenAI Codex (OAuth)
 
 
 class GatewayConfig(BaseModel):
