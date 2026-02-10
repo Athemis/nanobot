@@ -52,7 +52,10 @@ def test_convert_keys_converts_provider_fields_but_preserves_header_entries() ->
 
     converted = convert_keys(data)
 
-    assert converted["providers"]["openrouter"]["api_base"] == "https://openrouter.ai/api/v1"
+    assert (
+        converted["providers"]["openrouter"]["api_base"]
+        == "https://openrouter.ai/api/v1"
+    )
     assert converted["providers"]["openrouter"]["extra_headers"] == {
         "HTTP-Referer": "https://example.com",
         "X-Title": "nanobot",
@@ -79,3 +82,17 @@ def test_header_keys_survive_convert_round_trip() -> None:
     round_tripped = convert_keys(camel)
 
     assert round_tripped == snake_data
+
+
+def test_convert_keys_handles_openai_codex_insecure_tls_flag() -> None:
+    data = {
+        "providers": {
+            "openaiCodex": {
+                "allowInsecureTlsFallback": True,
+            }
+        }
+    }
+
+    converted = convert_keys(data)
+
+    assert converted["providers"]["openai_codex"]["allow_insecure_tls_fallback"] is True

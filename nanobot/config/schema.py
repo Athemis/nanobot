@@ -218,6 +218,12 @@ class ProviderConfig(BaseModel):
     )
 
 
+class OpenAICodexConfig(ProviderConfig):
+    """OpenAI Codex provider configuration."""
+
+    allow_insecure_tls_fallback: bool = False
+
+
 class ProvidersConfig(BaseModel):
     """Configuration for LLM providers."""
 
@@ -234,8 +240,8 @@ class ProvidersConfig(BaseModel):
     aihubmix: ProviderConfig = Field(
         default_factory=ProviderConfig
     )  # AiHubMix API gateway
-    openai_codex: ProviderConfig = Field(
-        default_factory=ProviderConfig
+    openai_codex: OpenAICodexConfig = Field(
+        default_factory=OpenAICodexConfig
     )  # OpenAI Codex (OAuth)  # AiHubMix API gateway
 
 

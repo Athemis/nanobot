@@ -8,8 +8,9 @@ import json
 from typing import Any, AsyncGenerator
 
 import httpx
-
+from loguru import logger
 from oauth_cli_kit import get_token as get_codex_token
+
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
@@ -19,9 +20,14 @@ DEFAULT_ORIGINATOR = "nanobot"
 class OpenAICodexProvider(LLMProvider):
     """Use Codex OAuth to call the Responses API."""
 
-    def __init__(self, default_model: str = "openai-codex/gpt-5.1-codex"):
+    def __init__(
+        self,
+        default_model: str = "openai-codex/gpt-5.1-codex",
+        allow_insecure_tls_fallback: bool = False,
+    ):
         super().__init__(api_key=None, api_base=None)
         self.default_model = default_model
+        self.allow_insecure_tls_fallback = allow_insecure_tls_fallback
 
     async def chat(
         self,
@@ -57,12 +63,24 @@ class OpenAICodexProvider(LLMProvider):
 
         try:
             try:
-                content, tool_calls, finish_reason = await _request_codex(url, headers, body, verify=True)
+                content, tool_calls, finish_reason = await _request_codex(
+                    url, headers, body, verify=True
+                )
             except Exception as e:
-                # Certificate verification failed, downgrade to disable verification (security risk)
-                if "CERTIFICATE_VERIFY_FAILED" not in str(e):
+                # Keep secure by default. Insecure TLS fallback is opt-in.
+                if (
+                    "CERTIFICATE_VERIFY_FAILED" not in str(e)
+                    or not self.allow_insecure_tls_fallback
+                ):
                     raise
-                content, tool_calls, finish_reason = await _request_codex(url, headers, body, verify=False)
+
+                logger.warning(
+                    "Retrying Codex request with TLS verification disabled because "
+                    "allow_insecure_tls_fallback is enabled."
+                )
+                content, tool_calls, finish_reason = await _request_codex(
+                    url, headers, body, verify=False
+                )
             return LLMResponse(
                 content=content,
                 tool_calls=tool_calls,
@@ -106,7 +124,11 @@ async def _request_codex(
         async with client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 text = await response.aread()
-                raise RuntimeError(_friendly_error(response.status_code, text.decode("utf-8", "ignore")))
+                raise RuntimeError(
+                    _friendly_error(
+                        response.status_code, text.decode("utf-8", "ignore")
+                    )
+                )
             return await _consume_sse(response)
 
 
@@ -114,7 +136,11 @@ def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # Nanobot tool definitions already use the OpenAI function schema.
     converted: list[dict[str, Any]] = []
     for tool in tools:
-        fn = tool.get("function") if isinstance(tool, dict) and tool.get("type") == "function" else None
+        fn = (
+            tool.get("function")
+            if isinstance(tool, dict) and tool.get("type") == "function"
+            else None
+        )
         if fn and isinstance(fn, dict):
             name = fn.get("name")
             desc = fn.get("description")
@@ -141,7 +167,9 @@ def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return converted
 
 
-def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+def _convert_messages(
+    messages: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
     system_prompt = ""
     input_items: list[dict[str, Any]] = []
 
@@ -214,7 +242,9 @@ def _convert_user_message(content: Any) -> dict[str, Any]:
             elif item.get("type") == "image_url":
                 url = (item.get("image_url") or {}).get("url")
                 if url:
-                    converted.append({"type": "input_image", "image_url": url, "detail": "auto"})
+                    converted.append(
+                        {"type": "input_image", "image_url": url, "detail": "auto"}
+                    )
         if converted:
             return {"role": "user", "content": converted}
     return {"role": "user", "content": [{"type": "input_text", "text": ""}]}
@@ -245,7 +275,11 @@ async def _iter_sse(response: httpx.Response) -> AsyncGenerator[dict[str, Any], 
     async for line in response.aiter_lines():
         if line == "":
             if buffer:
-                data_lines = [l[5:].strip() for l in buffer if l.startswith("data:")]
+                data_lines = [
+                    event_line[5:].strip()
+                    for event_line in buffer
+                    if event_line.startswith("data:")
+                ]
                 buffer = []
                 if not data_lines:
                     continue
@@ -260,9 +294,9 @@ async def _iter_sse(response: httpx.Response) -> AsyncGenerator[dict[str, Any], 
         buffer.append(line)
 
 
-
-
-async def _consume_sse(response: httpx.Response) -> tuple[str, list[ToolCallRequest], str]:
+async def _consume_sse(
+    response: httpx.Response,
+) -> tuple[str, list[ToolCallRequest], str]:
     content = ""
     tool_calls: list[ToolCallRequest] = []
     tool_call_buffers: dict[str, dict[str, Any]] = {}
