@@ -305,10 +305,19 @@ This file stores important information that should persist across sessions.
 
 
 def _make_provider(config):
-    """Create LiteLLMProvider from config. Exits if no API key found."""
+    """Create provider from config. Exits if no usable provider config found."""
     from nanobot.providers.litellm_provider import LiteLLMProvider
+    from nanobot.providers.openai_codex_provider import OpenAICodexProvider
     p = config.get_provider()
+    provider_name = config.get_provider_name()
     model = config.agents.defaults.model
+    if provider_name == "openai_codex":
+        return OpenAICodexProvider(
+            default_model=model,
+            allow_insecure_tls_fallback=bool(
+                getattr(p, "allow_insecure_tls_fallback", False)
+            ),
+        )
     if not (p and p.api_key) and not model.startswith("bedrock/"):
         console.print("[red]Error: No API key configured.[/red]")
         console.print("Set one in ~/.nanobot/config.json under providers section")
@@ -318,7 +327,7 @@ def _make_provider(config):
         api_base=config.get_api_base(),
         default_model=model,
         extra_headers=p.extra_headers if p else None,
-        provider_name=config.get_provider_name(),
+        provider_name=provider_name,
     )
 
 

@@ -2,6 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from nanobot.cli.commands import _make_provider
+from nanobot.config.schema import Config
 from nanobot.providers.openai_codex_provider import OpenAICodexProvider
 
 
@@ -65,3 +67,21 @@ async def test_codex_chat_retries_without_tls_verification_with_opt_in(
     assert response.finish_reason == "stop"
     assert response.content == "ok"
     assert any("allow_insecure_tls_fallback" in msg for msg in warnings)
+
+
+def test_make_provider_uses_codex_provider_without_api_key() -> None:
+    config = Config.model_validate(
+        {
+            "agents": {"defaults": {"model": "openai-codex/gpt-5.1-codex"}},
+            "providers": {
+                "openai_codex": {
+                    "allow_insecure_tls_fallback": True,
+                }
+            },
+        }
+    )
+
+    provider = _make_provider(config)
+
+    assert isinstance(provider, OpenAICodexProvider)
+    assert provider.allow_insecure_tls_fallback is True
