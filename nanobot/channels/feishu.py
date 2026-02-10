@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import threading
 from collections import OrderedDict
 from typing import Any
@@ -41,9 +42,9 @@ MSG_TYPE_MAP = {
 class FeishuChannel(BaseChannel):
     """
     Feishu/Lark channel using WebSocket long connection.
-    
+
     Uses WebSocket to receive events - no public IP or webhook required.
-    
+
     Requires:
     - App ID and App Secret from Feishu Open Platform
     - Bot capability enabled
@@ -147,7 +148,7 @@ class FeishuChannel(BaseChannel):
     async def _add_reaction(self, message_id: str, emoji_type: str = "THUMBSUP") -> None:
         """
         Add a reaction emoji to a message (non-blocking).
-        
+
         Common emoji types: THUMBSUP, OK, EYES, DONE, OnIt, HEART
         """
         if not self._client or not Emoji:
@@ -155,6 +156,47 @@ class FeishuChannel(BaseChannel):
 
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._add_reaction_sync, message_id, emoji_type)
+
+    # Regex to match markdown tables (header + separator + data rows)
+    _TABLE_RE = re.compile(
+        r"((?:^[ \t]*\|.+\|[ \t]*\n)(?:^[ \t]*\|[-:\s|]+\|[ \t]*\n)(?:^[ \t]*\|.+\|[ \t]*\n?)+)",
+        re.MULTILINE,
+    )
+
+    @staticmethod
+    def _parse_md_table(table_text: str) -> dict | None:
+        """Parse a markdown table into a Feishu table element."""
+        lines = [line.strip() for line in table_text.strip().split("\n") if line.strip()]
+        if len(lines) < 3:
+            return None
+
+        def _split_cells(row: str) -> list[str]:
+            return [cell.strip() for cell in row.strip("|").split("|")]
+
+        headers = _split_cells(lines[0])
+        rows = [_split_cells(row) for row in lines[2:]]
+        columns = [{"tag": "column", "name": f"c{i}", "display_name": h, "width": "auto"}
+                   for i, h in enumerate(headers)]
+        return {
+            "tag": "table",
+            "page_size": len(rows) + 1,
+            "columns": columns,
+            "rows": [{f"c{i}": r[i] if i < len(r) else "" for i in range(len(headers))} for r in rows],
+        }
+
+    def _build_card_elements(self, content: str) -> list[dict]:
+        """Split content into markdown + table elements for Feishu card."""
+        elements, last_end = [], 0
+        for m in self._TABLE_RE.finditer(content):
+            before = content[last_end:m.start()].strip()
+            if before:
+                elements.append({"tag": "markdown", "content": before})
+            elements.append(self._parse_md_table(m.group(1)) or {"tag": "markdown", "content": m.group(1)})
+            last_end = m.end()
+        remaining = content[last_end:].strip()
+        if remaining:
+            elements.append({"tag": "markdown", "content": remaining})
+        return elements or [{"tag": "markdown", "content": content}]
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Feishu."""
@@ -170,15 +212,20 @@ class FeishuChannel(BaseChannel):
             else:
                 receive_id_type = "open_id"
 
-            # Build text message content
-            content = json.dumps({"text": msg.content})
+            # Build card with markdown + table support
+            elements = self._build_card_elements(msg.content)
+            card = {
+                "config": {"wide_screen_mode": True},
+                "elements": elements,
+            }
+            content = json.dumps(card, ensure_ascii=False)
 
             request = CreateMessageRequest.builder() \
                 .receive_id_type(receive_id_type) \
                 .request_body(
                     CreateMessageRequestBody.builder()
                     .receive_id(msg.chat_id)
-                    .msg_type("text")
+                    .msg_type("interactive")
                     .content(content)
                     .build()
                 ).build()

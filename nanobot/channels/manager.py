@@ -1,8 +1,10 @@
 """Channel manager for coordinating chat channels."""
 
+from __future__ import annotations
+
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -10,6 +12,9 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Config
 from nanobot.providers.tts import TTSProvider
+
+if TYPE_CHECKING:
+    from nanobot.session.manager import SessionManager
 
 
 class ChannelManager:
@@ -21,10 +26,10 @@ class ChannelManager:
     - Start/stop channels
     - Route outbound messages
     """
-
-    def __init__(self, config: Config, bus: MessageBus):
+    def __init__(self, config: Config, bus: MessageBus, session_manager: "SessionManager | None" = None):
         self.config = config
         self.bus = bus
+        self.session_manager = session_manager
         self.channels: dict[str, BaseChannel] = {}
         self._dispatch_task: asyncio.Task | None = None
         self._tts_provider: TTSProvider | None = None
@@ -90,6 +95,7 @@ class ChannelManager:
                     video_max_frame_width=self.config.tools.multimodal.video_max_frame_width,
                     workspace=self.config.workspace_path,
                     cleanup_registry=self._cleanup_registry,
+                    session_manager=self.session_manager,
                 )
                 logger.info("Telegram channel enabled")
             except ImportError as e:
@@ -128,8 +134,72 @@ class ChannelManager:
             except ImportError as e:
                 logger.warning(f"Feishu channel not available: {e}")
 
+        # Mochat channel
+        if self.config.channels.mochat.enabled:
+            try:
+                from nanobot.channels.mochat import MochatChannel
+
+                self.channels["mochat"] = MochatChannel(
+                    self.config.channels.mochat, self.bus
+                )
+                logger.info("Mochat channel enabled")
+            except ImportError as e:
+                logger.warning(f"Mochat channel not available: {e}")
+
+        # DingTalk channel
+        if self.config.channels.dingtalk.enabled:
+            try:
+                from nanobot.channels.dingtalk import DingTalkChannel
+                self.channels["dingtalk"] = DingTalkChannel(
+                    self.config.channels.dingtalk, self.bus
+                )
+                logger.info("DingTalk channel enabled")
+            except ImportError as e:
+                logger.warning(f"DingTalk channel not available: {e}")
+
+        # Email channel
+        if self.config.channels.email.enabled:
+            try:
+                from nanobot.channels.email import EmailChannel
+                self.channels["email"] = EmailChannel(
+                    self.config.channels.email, self.bus
+                )
+                logger.info("Email channel enabled")
+            except ImportError as e:
+                logger.warning(f"Email channel not available: {e}")
+
+        # Slack channel
+        if self.config.channels.slack.enabled:
+            try:
+                from nanobot.channels.slack import SlackChannel
+                self.channels["slack"] = SlackChannel(
+                    self.config.channels.slack, self.bus
+                )
+                logger.info("Slack channel enabled")
+            except ImportError as e:
+                logger.warning(f"Slack channel not available: {e}")
+
+        # QQ channel
+        if self.config.channels.qq.enabled:
+            try:
+                from nanobot.channels.qq import QQChannel
+                self.channels["qq"] = QQChannel(
+                    self.config.channels.qq,
+                    self.bus,
+                )
+                logger.info("QQ channel enabled")
+            except ImportError as e:
+                logger.warning(f"QQ channel not available: {e}")
+
+    async def _start_channel(self, name: str, channel: BaseChannel) -> None:
+        """Start a channel and log any exceptions."""
+        try:
+            await channel.start()
+        except Exception as e:
+            logger.error(f"Failed to start channel {name}: {e}")
+
     async def start_all(self) -> None:
-        """Start WhatsApp channel and the outbound dispatcher."""
+        """Start all channels and the outbound dispatcher."""
         if not self.channels:
             logger.warning("No channels enabled")
             return
@@ -137,11 +207,11 @@ class ChannelManager:
         # Start outbound dispatcher
         self._dispatch_task = asyncio.create_task(self._dispatch_outbound())
 
-        # Start WhatsApp channel
+        # Start channels
         tasks = []
         for name, channel in self.channels.items():
             logger.info(f"Starting {name} channel...")
-            tasks.append(asyncio.create_task(channel.start()))
+            tasks.append(asyncio.create_task(self._start_channel(name, channel)))
 
         # Wait for all to complete (they should run forever)
         await asyncio.gather(*tasks, return_exceptions=True)

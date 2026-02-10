@@ -1,5 +1,6 @@
 """LiteLLM provider implementation for multi-provider support."""
 
+import json
 import os
 from typing import Any
 
@@ -8,6 +9,7 @@ from litellm import acompletion
 from loguru import logger
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.registry import find_by_model, find_gateway
 
 
 class LiteLLMProvider(LLMProvider):
@@ -15,61 +17,88 @@ class LiteLLMProvider(LLMProvider):
     LLM provider using LiteLLM for multi-provider support.
 
     Supports OpenRouter, Anthropic, OpenAI, Gemini, and many other providers through
-    a unified interface.
+    a unified interface.  Provider-specific logic is driven by the registry
+    (see providers/registry.py) — no if-elif chains needed here.
     """
 
     def __init__(
         self,
         api_key: str | None = None,
         api_base: str | None = None,
-        default_model: str = "anthropic/claude-opus-4-5"
+        default_model: str = "anthropic/claude-opus-4-5",
+        extra_headers: dict[str, str] | None = None,
+        provider_name: str | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
+        self.extra_headers = extra_headers or {}
 
-        # Detect OpenRouter by api_key prefix or explicit api_base
-        self.is_openrouter = (
-            (api_key and api_key.startswith("sk-or-")) or
-            (api_base and "openrouter" in api_base)
-        )
+        # Detect gateway / local deployment.
+        # provider_name (from config key) is the primary signal;
+        # api_key / api_base are fallback for auto-detection.
+        self._gateway = find_gateway(provider_name, api_key, api_base)
 
-        # Track if using custom endpoint (vLLM, etc.)
-        self.is_vllm = bool(api_base) and not self.is_openrouter
+        # Configure environment variables
+        if api_key:
+            self._setup_env(api_key, api_base, default_model)
 
-        # Store provider detection based on default_model for API key mapping
-        self._provider_env_key = self._get_provider_env_key(default_model)
+        if api_base:
+            litellm.api_base = api_base
 
         # Disable LiteLLM logging noise
         litellm.suppress_debug_info = True
+        # Drop unsupported parameters for providers (e.g., gpt-5 rejects some params)
+        litellm.drop_params = True
 
-    def _get_provider_env_key(self, model: str) -> str | None:
-        """
-        Get the environment variable key for a given provider/model.
+    def _setup_env(self, api_key: str, api_base: str | None, model: str) -> None:
+        """Set environment variables based on detected provider."""
+        spec = self._gateway or find_by_model(model)
+        if not spec:
+            return
 
-        This is used only as a fallback to read from environment if no api_key
-        was provided during initialization. We don't write to environment anymore
-        to avoid race conditions with multiple instances.
-        """
+        # Gateway/local overrides existing env; standard provider doesn't
+        if self._gateway:
+            os.environ[spec.env_key] = api_key
+        else:
+            os.environ.setdefault(spec.env_key, api_key)
+
+        # Resolve env_extras placeholders:
+        #   {api_key}  → user's API key
+        #   {api_base} → user's api_base, falling back to spec.default_api_base
+        effective_base = api_base or spec.default_api_base
+        for env_name, env_val in spec.env_extras:
+            resolved = env_val.replace("{api_key}", api_key)
+            resolved = resolved.replace("{api_base}", effective_base)
+            os.environ.setdefault(env_name, resolved)
+
+    def _resolve_model(self, model: str) -> str:
+        """Resolve model name by applying provider/gateway prefixes."""
+        if self._gateway:
+            # Gateway mode: apply gateway prefix, skip provider-specific prefixes
+            prefix = self._gateway.litellm_prefix
+            if self._gateway.strip_model_prefix:
+                model = model.split("/")[-1]
+            if prefix and not model.startswith(f"{prefix}/"):
+                model = f"{prefix}/{model}"
+            return model
+
+        # Standard mode: auto-prefix for known providers
+        spec = find_by_model(model)
+        if spec and spec.litellm_prefix:
+            if not any(model.startswith(s) for s in spec.skip_prefixes):
+                model = f"{spec.litellm_prefix}/{model}"
+
+        return model
+
+    def _apply_model_overrides(self, model: str, kwargs: dict[str, Any]) -> None:
+        """Apply model-specific parameter overrides from the registry."""
         model_lower = model.lower()
-        if self.is_openrouter:
-            return "OPENROUTER_API_KEY"
-        elif self.is_vllm:
-            return "OPENAI_API_KEY"
-        elif "deepseek" in model_lower:
-            return "DEEPSEEK_API_KEY"
-        elif "anthropic" in model_lower or "claude" in model_lower:
-            return "ANTHROPIC_API_KEY"
-        elif "openai" in model_lower or "gpt" in model_lower:
-            return "OPENAI_API_KEY"
-        elif "gemini" in model_lower:
-            return "GEMINI_API_KEY"
-        elif "zhipu" in model_lower or "glm" in model_lower or "zai" in model_lower:
-            return "ZHIPUAI_API_KEY"
-        elif "groq" in model_lower:
-            return "GROQ_API_KEY"
-        elif "moonshot" in model_lower or "kimi" in model_lower:
-            return "MOONSHOT_API_KEY"
-        return None
+        spec = find_by_model(model)
+        if spec:
+            for pattern, overrides in spec.model_overrides:
+                if pattern in model_lower:
+                    kwargs.update(overrides)
+                    return
 
     async def chat(
         self,
@@ -92,41 +121,7 @@ class LiteLLMProvider(LLMProvider):
         Returns:
             LLMResponse with content and/or tool calls.
         """
-        model = model or self.default_model
-
-        # For OpenRouter, prefix model name if not already prefixed
-        if self.is_openrouter and not model.startswith("openrouter/"):
-            model = f"openrouter/{model}"
-
-        # For Zhipu/Z.ai, ensure prefix is present
-        # Handle cases like "glm-4.7-flash" -> "zai/glm-4.7-flash"
-        if ("glm" in model.lower() or "zhipu" in model.lower()) and not (
-            model.startswith("zhipu/") or
-            model.startswith("zai/") or
-            model.startswith("openrouter/")
-        ):
-            model = f"zai/{model}"
-
-        # For Moonshot/Kimi, ensure moonshot/ prefix (before vLLM check)
-        if ("moonshot" in model.lower() or "kimi" in model.lower()) and not (
-            model.startswith("moonshot/") or model.startswith("openrouter/")
-        ):
-            model = f"moonshot/{model}"
-
-        # For Gemini, ensure gemini/ prefix if not already present
-        if "gemini" in model.lower() and not model.startswith("gemini/"):
-            model = f"gemini/{model}"
-
-        # For vLLM, use hosted_vllm/ prefix per LiteLLM docs
-        # Convert openai/ prefix to hosted_vllm/ if user specified it
-        if self.is_vllm:
-            model = f"hosted_vllm/{model}"
-
-        # kimi-k2.5 only supports temperature=1.0
-        if "kimi-k2.5" in model.lower():
-            temperature = 1.0
-
-        # Format content for multimodal support (vision)
+        model = self._resolve_model(model or self.default_model)
         formatted_messages = self._format_messages_for_provider(messages, model)
 
         kwargs: dict[str, Any] = {
@@ -136,19 +131,20 @@ class LiteLLMProvider(LLMProvider):
             "temperature": temperature,
         }
 
-        # Pass api_key directly to avoid race conditions with multiple instances
-        # This takes precedence over environment variables
+        # Apply model-specific overrides (e.g. kimi-k2.5 temperature)
+        self._apply_model_overrides(model, kwargs)
+
+        # Pass api_key directly — more reliable than env vars alone
         if self.api_key:
             kwargs["api_key"] = self.api_key
-        elif self._provider_env_key:
-            # Fallback: read from environment (but don't write to it)
-            env_key = os.environ.get(self._provider_env_key)
-            if env_key:
-                kwargs["api_key"] = env_key
 
-        # Pass api_base directly for custom endpoints (vLLM, etc.)
+        # Pass api_base for custom endpoints
         if self.api_base:
             kwargs["api_base"] = self.api_base
+
+        # Pass extra headers (e.g. APP-Code for AiHubMix)
+        if self.extra_headers:
+            kwargs["extra_headers"] = self.extra_headers
 
         if tools:
             kwargs["tools"] = tools
@@ -203,7 +199,6 @@ class LiteLLMProvider(LLMProvider):
                 # Parse arguments from JSON string if needed
                 args = tc.function.arguments
                 if isinstance(args, str):
-                    import json
                     try:
                         args = json.loads(args)
                     except json.JSONDecodeError:
@@ -222,12 +217,14 @@ class LiteLLMProvider(LLMProvider):
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens,
             }
+        reasoning_content = getattr(message, "reasoning_content", None)
 
         return LLMResponse(
             content=message.content,
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason or "stop",
             usage=usage,
+            reasoning_content=reasoning_content,
         )
 
     def get_default_model(self) -> str:

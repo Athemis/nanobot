@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -17,8 +18,12 @@ from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
+from nanobot.config.schema import ExecToolConfig
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import SessionManager
+
+if TYPE_CHECKING:
+    from nanobot.cron.service import CronService
 
 
 class AgentLoop:
@@ -44,9 +49,9 @@ class AgentLoop:
         exec_config: "ExecToolConfig | None" = None,
         cron_service: "CronService | None" = None,
         restrict_to_workspace: bool = False,
+        session_manager: SessionManager | None = None,
         max_image_size: int | None = None,
     ):
-        from nanobot.config.schema import ExecToolConfig
         self.bus = bus
         self.provider = provider
         self.workspace = workspace
@@ -58,7 +63,7 @@ class AgentLoop:
         self.restrict_to_workspace = restrict_to_workspace
 
         self.context = ContextBuilder(workspace, max_image_size=max_image_size)
-        self.sessions = SessionManager(workspace)
+        self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
             provider=provider,
@@ -158,7 +163,8 @@ class AgentLoop:
         if msg.channel == "system":
             return await self._process_system_message(msg)
 
-        logger.info(f"Processing message from {msg.channel}:{msg.sender_id}")
+        preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
+        logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {preview}")
 
         # Get or create session
         session = self.sessions.get_or_create(msg.session_key)
@@ -214,23 +220,21 @@ class AgentLoop:
                     for tc in response.tool_calls
                 ]
                 messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts
+                    messages, response.content, tool_call_dicts,
+                    reasoning_content=response.reasoning_content,
                 )
 
                 # Execute tools
                 for tool_call in response.tool_calls:
-                    args_str = json.dumps(tool_call.arguments)
-                    logger.debug(f"Executing tool: {tool_call.name} with arguments: {args_str}")
-
+                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+                    logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
                     # Special handling for voice tool to update session metadata
                     if tool_call.name == "voice":
-                        state = tool_call.arguments.get("state", "")
-                        state_lower = state.lower().strip()
-                        if state_lower in ("on", "enabled", "true", "yes"):
+                        state = str(tool_call.arguments.get("state", "")).lower().strip()
+                        if state in ("on", "enabled", "true", "yes"):
                             session.metadata["voice_enabled"] = True
-                        elif state_lower in ("off", "disabled", "false", "no"):
+                        elif state in ("off", "disabled", "false", "no"):
                             session.metadata["voice_enabled"] = False
-
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
@@ -242,6 +246,10 @@ class AgentLoop:
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
+
+        # Log response preview
+        preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
+        logger.info(f"Response to {msg.channel}:{msg.sender_id}: {preview}")
 
         # Save to session
         session.add_message("user", msg.content)
@@ -255,7 +263,11 @@ class AgentLoop:
             channel=msg.channel,
             chat_id=msg.chat_id,
             content=final_content,
-            metadata={"voice": voice_enabled} if voice_enabled else {}
+            metadata=(
+                {**msg.metadata, "voice": True}
+                if voice_enabled
+                else dict(msg.metadata)
+            ),
         )
 
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
@@ -328,12 +340,13 @@ class AgentLoop:
                     for tc in response.tool_calls
                 ]
                 messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts
+                    messages, response.content, tool_call_dicts,
+                    reasoning_content=response.reasoning_content,
                 )
 
                 for tool_call in response.tool_calls:
-                    args_str = json.dumps(tool_call.arguments)
-                    logger.debug(f"Executing tool: {tool_call.name} with arguments: {args_str}")
+                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+                    logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
