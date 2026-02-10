@@ -8,7 +8,6 @@ import json
 from typing import Any, AsyncGenerator
 
 import httpx
-from loguru import logger
 from oauth_cli_kit import get_token as get_codex_token
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
@@ -23,11 +22,9 @@ class OpenAICodexProvider(LLMProvider):
     def __init__(
         self,
         default_model: str = "openai-codex/gpt-5.1-codex",
-        allow_insecure_tls_fallback: bool = False,
     ):
         super().__init__(api_key=None, api_base=None)
         self.default_model = default_model
-        self.allow_insecure_tls_fallback = allow_insecure_tls_fallback
 
     async def chat(
         self,
@@ -62,25 +59,9 @@ class OpenAICodexProvider(LLMProvider):
         url = DEFAULT_CODEX_URL
 
         try:
-            try:
-                content, tool_calls, finish_reason = await _request_codex(
-                    url, headers, body, verify=True
-                )
-            except Exception as e:
-                # Keep secure by default. Insecure TLS fallback is opt-in.
-                if (
-                    "CERTIFICATE_VERIFY_FAILED" not in str(e)
-                    or not self.allow_insecure_tls_fallback
-                ):
-                    raise
-
-                logger.warning(
-                    "Retrying Codex request with TLS verification disabled because "
-                    "allow_insecure_tls_fallback is enabled."
-                )
-                content, tool_calls, finish_reason = await _request_codex(
-                    url, headers, body, verify=False
-                )
+            content, tool_calls, finish_reason = await _request_codex(
+                url, headers, body, verify=True
+            )
             return LLMResponse(
                 content=content,
                 tool_calls=tool_calls,

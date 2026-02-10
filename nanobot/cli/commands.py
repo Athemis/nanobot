@@ -312,12 +312,7 @@ def _make_provider(config):
     provider_name = config.get_provider_name()
     model = config.agents.defaults.model
     if provider_name == "openai_codex":
-        return OpenAICodexProvider(
-            default_model=model,
-            allow_insecure_tls_fallback=bool(
-                getattr(p, "allow_insecure_tls_fallback", False)
-            ),
-        )
+        return OpenAICodexProvider(default_model=model)
     if not (p and p.api_key) and not model.startswith("bedrock/"):
         console.print("[red]Error: No API key configured.[/red]")
         console.print("Set one in ~/.nanobot/config.json under providers section")
