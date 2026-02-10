@@ -172,6 +172,7 @@ class MatrixConfig(BaseModel):
     homeserver: str = "https://matrix.org"
     access_token: str = ""
     user_id: str = ""  # @bot:matrix.org
+    device_id: str = ""
     allow_from: list[str] = Field(default_factory=list)
 
 
