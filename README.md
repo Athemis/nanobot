@@ -287,6 +287,7 @@ Uses Matrix sync via `matrix-nio` (including inbound media support).
       "userId": "@nanobot:matrix.org",
       "accessToken": "syt_xxx",
       "deviceId": "NANOBOT01",
+      "e2eeEnabled": true,
       "allowFrom": [],
       "groupPolicy": "open",
       "groupAllowFrom": [],
@@ -301,6 +302,7 @@ Uses Matrix sync via `matrix-nio` (including inbound media support).
 > `groupPolicy`: `open`, `mention`, or `allowlist`.
 > `groupAllowFrom`: Room allowlist used when `groupPolicy` is `allowlist`.
 > `allowRoomMentions`: If `true`, accepts `@room` (`m.mentions.room`) in mention mode.
+> `e2eeEnabled`: Enables Matrix E2EE support (default `true`); set `false` only for plaintext-only setups.
 > `maxInboundMediaBytes`: Max inbound attachment size in bytes (default `20MB`).
 
 > [!NOTE]
@@ -308,7 +310,8 @@ Uses Matrix sync via `matrix-nio` (including inbound media support).
 >
 > - Keep a persistent `matrix-store` and stable `deviceId`; otherwise encrypted session state can be lost after restart.
 > - In newly joined encrypted rooms, initial messages may fail until Olm/Megolm sessions are established.
-> - The bot currently sends with `ignore_unverified_devices=true` (more compatible, less strict than verified-only sending).
+> - With `e2eeEnabled=false`, encrypted room messages may be undecryptable and E2EE send safeguards are not applied.
+> - With `e2eeEnabled=true`, the bot sends with `ignore_unverified_devices=true` (more compatible, less strict than verified-only sending).
 > - Changing `accessToken`/`deviceId` effectively creates a new device and may require session re-establishment.
 
 **4. Run**
