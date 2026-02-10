@@ -5,9 +5,6 @@ import tempfile
 import time
 from pathlib import Path
 from threading import Thread
-from unittest.mock import patch
-
-import pytest
 
 from nanobot.utils.media_cleanup import MediaCleanupRegistry, get_cleanup_registry
 
@@ -173,7 +170,6 @@ class TestMediaCleanupRegistry:
 
     def test_signal_handler_registration(self):
         """Test that signal handlers are registered during init."""
-        import signal
 
         # Check that SIGTERM handler was registered
         # Note: We can't easily test the actual handler without complex setup,
@@ -202,6 +198,25 @@ class TestMediaCleanupRegistry:
         # Thread should stop
         time.sleep(0.2)
         assert not registry._cleanup_thread.is_alive()
+
+    def test_periodic_cleanup_stop_wakes_long_sleep(self):
+        """Test that stop interrupts long sleep and terminates promptly."""
+        registry = MediaCleanupRegistry(
+            media_dir=self.temp_dir,
+            periodic_cleanup=True,
+            periodic_interval_seconds=3600.0,
+        )
+
+        time.sleep(0.05)
+        assert registry._cleanup_thread is not None
+        assert registry._cleanup_thread.is_alive()
+
+        start = time.time()
+        registry.stop_periodic_cleanup()
+        elapsed = time.time() - start
+
+        assert not registry._cleanup_thread.is_alive()
+        assert elapsed < 1.0
 
     def test_cleanup_temp_directories(self):
         """Test cleanup of system temp directories."""

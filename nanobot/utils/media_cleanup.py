@@ -45,6 +45,7 @@ class MediaCleanupRegistry:
         self.periodic_interval = periodic_interval_seconds
         self._registered_files: set[Path] = set()
         self._shutdown = False
+        self._stop_event = threading.Event()
         self._cleanup_thread: threading.Thread | None = None
         self._cleanup_lock = threading.Lock()
 
@@ -78,7 +79,7 @@ class MediaCleanupRegistry:
         def cleanup_loop():
             while not self._shutdown:
                 try:
-                    time.sleep(self.periodic_interval)
+                    self._stop_event.wait(self.periodic_interval)
                     if self._shutdown:
                         break
                     self.cleanup_old_files()
@@ -97,9 +98,13 @@ class MediaCleanupRegistry:
         """Stop the periodic cleanup background thread."""
         with self._cleanup_lock:
             self._shutdown = True
+            self._stop_event.set()
         if self._cleanup_thread and self._cleanup_thread.is_alive():
             self._cleanup_thread.join(timeout=5.0)
-            logger.info("Stopped periodic cleanup")
+            if self._cleanup_thread.is_alive():
+                logger.warning("Periodic cleanup thread did not stop within timeout")
+            else:
+                logger.info("Stopped periodic cleanup")
 
     def register(self, file_path: Path | str) -> None:
         """
