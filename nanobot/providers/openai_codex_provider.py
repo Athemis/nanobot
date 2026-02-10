@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import ssl
 from typing import Any, AsyncGenerator
 
 import httpx
+from loguru import logger
 from oauth_cli_kit import get_token as get_codex_token
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
@@ -68,8 +70,9 @@ class OpenAICodexProvider(LLMProvider):
                 finish_reason=finish_reason,
             )
         except Exception as e:
+            logger.exception("Codex request failed")
             return LLMResponse(
-                content=f"Error calling Codex: {str(e)}",
+                content=f"Error calling Codex: {_public_error_message(e)}",
                 finish_reason="error",
             )
 
@@ -105,10 +108,14 @@ async def _request_codex(
         async with client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 text = await response.aread()
-                raise RuntimeError(
-                    _friendly_error(
-                        response.status_code, text.decode("utf-8", "ignore")
+                raw_error = text.decode("utf-8", "ignore")
+                if raw_error:
+                    logger.debug(
+                        "Codex error response body (truncated): {}",
+                        _truncate_for_log(raw_error),
                     )
+                raise RuntimeError(
+                    _friendly_error(response.status_code)
                 )
             return await _consume_sse(response)
 
@@ -346,7 +353,48 @@ def _map_finish_reason(status: str | None) -> str:
     return "stop"
 
 
-def _friendly_error(status_code: int, raw: str) -> str:
+def _friendly_error(status_code: int) -> str:
     if status_code == 429:
         return "ChatGPT usage quota exceeded or rate limit triggered. Please try again later."
-    return f"HTTP {status_code}: {raw}"
+    if status_code == 401:
+        return "Codex authentication failed (HTTP 401)."
+    if status_code == 403:
+        return "Codex access denied (HTTP 403)."
+    if status_code == 404:
+        return "Codex endpoint not found (HTTP 404)."
+    if status_code == 400:
+        return "Codex rejected the request (HTTP 400)."
+    if 500 <= status_code <= 599:
+        return f"Codex service error (HTTP {status_code})."
+    return f"Codex request failed (HTTP {status_code})."
+
+
+def _is_tls_verify_error(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (ssl.SSLCertVerificationError, ssl.CertificateError)):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _public_error_message(exc: BaseException) -> str:
+    if _is_tls_verify_error(exc):
+        return "TLS certificate verification failed while calling Codex."
+    if isinstance(exc, httpx.TimeoutException):
+        return "Codex request timed out."
+    if isinstance(exc, httpx.RequestError):
+        return "Network error while calling Codex."
+
+    message = str(exc).strip()
+    if message.startswith(("HTTP ", "Codex ", "ChatGPT ")):
+        return _truncate_for_log(message, limit=200)
+    return "Codex request failed."
+
+
+def _truncate_for_log(value: str, limit: int = 1000) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}...<truncated>"
