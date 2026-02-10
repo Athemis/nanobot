@@ -39,6 +39,7 @@ dependencies = [
     "qq-botpy>=1.0.0",
     "python-socks[asyncio]>=2.4.0",
     "matrix-nio[e2e]>=0.25.2",
+    "mistune>=3.0.0",
 ]
 
 [project.optional-dependencies]
