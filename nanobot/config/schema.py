@@ -174,6 +174,8 @@ class MatrixConfig(BaseModel):
     access_token: str = ""
     user_id: str = ""  # @bot:matrix.org
     device_id: str = ""
+    # Max seconds to wait for sync_forever to stop gracefully before cancellation fallback.
+    sync_stop_grace_seconds: int = 2
     allow_from: list[str] = Field(default_factory=list)
 
 
@@ -299,9 +301,7 @@ class Config(BaseSettings):
         """Get expanded workspace path."""
         return Path(self.agents.defaults.workspace).expanduser()
 
-    def _match_provider(
-        self, model: str | None = None
-    ) -> tuple["ProviderConfig | None", str | None]:
+    def _match_provider(self, model: str | None = None) -> tuple["ProviderConfig | None", str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
         from nanobot.providers.registry import PROVIDERS
 
