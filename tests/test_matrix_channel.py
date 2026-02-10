@@ -54,7 +54,6 @@ class _FakeAsyncClient:
         self.download_filename: str | None = None
         self.raise_on_send = False
         self.raise_on_typing = False
-        self.return_event_id = True
 
     def add_event_callback(self, callback, event_type) -> None:
         self.callbacks.append((callback, event_type))
@@ -77,7 +76,7 @@ class _FakeAsyncClient:
         message_type: str,
         content: dict[str, object],
         ignore_unverified_devices: object = _ROOM_SEND_UNSET,
-    ) -> object:
+    ) -> None:
         call: dict[str, object] = {
             "room_id": room_id,
             "message_type": message_type,
@@ -88,9 +87,6 @@ class _FakeAsyncClient:
         self.room_send_calls.append(call)
         if self.raise_on_send:
             raise RuntimeError("send failed")
-        if self.return_event_id:
-            return SimpleNamespace(event_id=f"$event{len(self.room_send_calls)}")
-        return SimpleNamespace()
 
     async def room_typing(
         self,
@@ -689,58 +685,6 @@ async def test_send_omits_ignore_unverified_devices_when_e2ee_disabled() -> None
 
     assert len(client.room_send_calls) == 1
     assert "ignore_unverified_devices" not in client.room_send_calls[0]
-
-
-@pytest.mark.asyncio
-async def test_send_simulates_streaming_with_edits(monkeypatch) -> None:
-    channel = MatrixChannel(
-        _make_config(simulate_streaming=True),
-        MessageBus(),
-    )
-    client = _FakeAsyncClient("", "", "", None)
-    channel.client = client
-
-    monkeypatch.setattr(matrix_module, "MATRIX_STREAM_SIMULATION_INTERVAL_SECONDS", 0.0)
-    monkeypatch.setattr(matrix_module, "MATRIX_STREAM_SIMULATION_CHUNK_CHARS", 5)
-    await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content="Hello world")
-    )
-
-    assert len(client.room_send_calls) >= 2
-    assert client.room_send_calls[0]["content"]["body"] == "Hello"
-
-    edit_calls = client.room_send_calls[1:]
-    assert edit_calls
-    for call in edit_calls:
-        assert call["content"]["m.relates_to"] == {"rel_type": "m.replace", "event_id": "$event1"}
-
-    final_edit = edit_calls[-1]["content"]
-    assert final_edit["m.relates_to"] == {"rel_type": "m.replace", "event_id": "$event1"}
-    assert final_edit["m.new_content"]["body"] == "Hello world"
-    assert str(final_edit["body"]).startswith("* ")
-    assert client.typing_calls[-1] == ("!room:matrix.org", False, TYPING_NOTICE_TIMEOUT_MS)
-
-
-@pytest.mark.asyncio
-async def test_send_simulation_falls_back_when_event_id_missing(monkeypatch) -> None:
-    channel = MatrixChannel(
-        _make_config(simulate_streaming=True),
-        MessageBus(),
-    )
-    client = _FakeAsyncClient("", "", "", None)
-    client.return_event_id = False
-    channel.client = client
-
-    monkeypatch.setattr(matrix_module, "MATRIX_STREAM_SIMULATION_INTERVAL_SECONDS", 0.0)
-    monkeypatch.setattr(matrix_module, "MATRIX_STREAM_SIMULATION_CHUNK_CHARS", 5)
-    await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content="Hello world")
-    )
-
-    assert len(client.room_send_calls) == 2
-    assert client.room_send_calls[0]["content"]["body"] == "Hello"
-    assert client.room_send_calls[1]["content"]["body"] == "Hello world"
-    assert "m.relates_to" not in client.room_send_calls[1]["content"]
 
 
 @pytest.mark.asyncio

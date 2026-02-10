@@ -45,9 +45,6 @@ TYPING_NOTICE_TIMEOUT_MS = 30_000
 # Keepalive interval must stay below TYPING_NOTICE_TIMEOUT_MS so the typing
 # indicator does not expire while the agent is still processing.
 TYPING_KEEPALIVE_INTERVAL_SECONDS = 20.0
-MATRIX_STREAM_SIMULATION_CHUNK_CHARS = 140
-MATRIX_STREAM_SIMULATION_INTERVAL_SECONDS = 0.2
-MATRIX_STREAM_SIMULATION_MAX_EDITS = 12
 MATRIX_HTML_FORMAT = "org.matrix.custom.html"
 MATRIX_ATTACHMENT_MARKER_TEMPLATE = "[attachment: {}]"
 MATRIX_ATTACHMENT_TOO_LARGE_TEMPLATE = "[attachment: {} - too large]"
@@ -205,21 +202,6 @@ def _build_matrix_text_content(text: str) -> dict[str, object]:
     return content
 
 
-def _build_matrix_edit_content(text: str, target_event_id: str) -> dict[str, object]:
-    """Build an edit event payload for Matrix message replacement."""
-    new_content = _build_matrix_text_content(text)
-    return {
-        "msgtype": "m.text",
-        "body": f"* {text}",
-        "m.new_content": new_content,
-        "m.relates_to": {
-            "rel_type": "m.replace",
-            "event_id": target_event_id,
-        },
-        "m.mentions": new_content.get("m.mentions", {}),
-    }
-
-
 class _NioLoguruHandler(logging.Handler):
     """Route stdlib logging records from matrix-nio into Loguru output."""
 
@@ -356,56 +338,9 @@ class MatrixChannel(BaseChannel):
             room_send_kwargs["ignore_unverified_devices"] = True
 
         try:
-            if self.config.simulate_streaming:
-                completed = await self._send_simulated(
-                    room_send_kwargs=room_send_kwargs,
-                    text=msg.content,
-                )
-                if not completed:
-                    room_send_kwargs["content"] = _build_matrix_text_content(msg.content)
-                    await self.client.room_send(**room_send_kwargs)
-                return
-
-            await self.client.room_send(**room_send_kwargs)
-        except Exception as e:
-            if not self.config.simulate_streaming:
-                raise
-            logger.warning(
-                "Matrix stream simulation failed in room {} ({}): {}",
-                msg.chat_id,
-                type(e).__name__,
-                str(e),
-            )
-            room_send_kwargs["content"] = _build_matrix_text_content(msg.content)
             await self.client.room_send(**room_send_kwargs)
         finally:
             await self._stop_typing_keepalive(msg.chat_id, clear_typing=True)
-
-    async def _send_simulated(self, room_send_kwargs: dict[str, Any], text: str) -> bool:
-        """Send first chunk, then progressive m.replace edits. Returns True on completion."""
-        first_chunk = text[:MATRIX_STREAM_SIMULATION_CHUNK_CHARS]
-        room_send_kwargs["content"] = _build_matrix_text_content(first_chunk)
-        response = await self.client.room_send(**room_send_kwargs)
-        if len(text) <= MATRIX_STREAM_SIMULATION_CHUNK_CHARS:
-            return True
-
-        event_id = getattr(response, "event_id", None)
-        if not isinstance(event_id, str) or not event_id:
-            return False
-
-        cursor = MATRIX_STREAM_SIMULATION_CHUNK_CHARS * 2
-        edits_sent = 0
-        while cursor < len(text) and edits_sent < MATRIX_STREAM_SIMULATION_MAX_EDITS - 1:
-            await asyncio.sleep(MATRIX_STREAM_SIMULATION_INTERVAL_SECONDS)
-            room_send_kwargs["content"] = _build_matrix_edit_content(text[:cursor], event_id)
-            await self.client.room_send(**room_send_kwargs)
-            edits_sent += 1
-            cursor += MATRIX_STREAM_SIMULATION_CHUNK_CHARS
-
-        await asyncio.sleep(MATRIX_STREAM_SIMULATION_INTERVAL_SECONDS)
-        room_send_kwargs["content"] = _build_matrix_edit_content(text, event_id)
-        await self.client.room_send(**room_send_kwargs)
-        return True
 
     def _register_event_callbacks(self) -> None:
         """Register Matrix event callbacks used by this channel."""

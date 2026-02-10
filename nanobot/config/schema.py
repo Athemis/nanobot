@@ -184,8 +184,6 @@ class MatrixConfig(BaseModel):
     group_policy: Literal["open", "mention", "allowlist"] = "open"
     group_allow_from: list[str] = Field(default_factory=list)
     allow_room_mentions: bool = False
-    # Optional UI-like streaming simulation via Matrix message edits (m.replace).
-    simulate_streaming: bool = False
 
 
 class ChannelsConfig(BaseModel):
