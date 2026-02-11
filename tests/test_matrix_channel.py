@@ -45,15 +45,20 @@ class _FakeAsyncClient:
         self.join_calls: list[str] = []
         self.callbacks: list[tuple[object, object]] = []
         self.response_callbacks: list[tuple[object, object]] = []
+        self.rooms: dict[str, object] = {}
         self.room_send_calls: list[dict[str, object]] = []
         self.typing_calls: list[tuple[str, bool, int]] = []
         self.download_calls: list[dict[str, object]] = []
+        self.upload_calls: list[dict[str, object]] = []
         self.download_response: object | None = None
         self.download_bytes: bytes = b"media"
         self.download_content_type: str = "application/octet-stream"
         self.download_filename: str | None = None
+        self.upload_response: object | None = None
+        self.content_repository_config_response: object = SimpleNamespace(upload_size=None)
         self.raise_on_send = False
         self.raise_on_typing = False
+        self.raise_on_upload = False
 
     def add_event_callback(self, callback, event_type) -> None:
         self.callbacks.append((callback, event_type))
@@ -107,6 +112,47 @@ class _FakeAsyncClient:
             content_type=self.download_content_type,
             filename=self.download_filename,
         )
+
+    async def upload(
+        self,
+        data_provider,
+        content_type: str | None = None,
+        filename: str | None = None,
+        filesize: int | None = None,
+        encrypt: bool = False,
+    ):
+        if self.raise_on_upload:
+            raise RuntimeError("upload failed")
+        if isinstance(data_provider, (bytes, bytearray)):
+            raise TypeError(
+                f"data_provider type {type(data_provider)!r} is not of a usable type "
+                "(Callable, IOBase)"
+            )
+        self.upload_calls.append(
+            {
+                "data_provider": data_provider,
+                "content_type": content_type,
+                "filename": filename,
+                "filesize": filesize,
+                "encrypt": encrypt,
+            }
+        )
+        if self.upload_response is not None:
+            return self.upload_response
+        if encrypt:
+            return (
+                SimpleNamespace(content_uri="mxc://example.org/uploaded"),
+                {
+                    "v": "v2",
+                    "iv": "iv",
+                    "hashes": {"sha256": "hash"},
+                    "key": {"alg": "A256CTR", "k": "key"},
+                },
+            )
+        return SimpleNamespace(content_uri="mxc://example.org/uploaded"), None
+
+    async def content_repository_config(self):
+        return self.content_repository_config_response
 
     async def close(self) -> None:
         return None
@@ -506,7 +552,7 @@ async def test_on_media_message_respects_declared_size_limit(
 ) -> None:
     monkeypatch.setattr("nanobot.channels.matrix.get_data_dir", lambda: tmp_path)
 
-    channel = MatrixChannel(_make_config(max_inbound_media_bytes=3), MessageBus())
+    channel = MatrixChannel(_make_config(max_media_bytes=3), MessageBus())
     client = _FakeAsyncClient("", "", "", None)
     channel.client = client
 
@@ -524,6 +570,42 @@ async def test_on_media_message_respects_declared_size_limit(
         url="mxc://example.org/large",
         event_id="$event2",
         source={"content": {"msgtype": "m.file", "info": {"size": 10}}},
+    )
+
+    await channel._on_media_message(room, event)
+
+    assert client.download_calls == []
+    assert len(handled) == 1
+    assert handled[0]["media"] == []
+    assert handled[0]["metadata"]["attachments"] == []
+    assert "[attachment: large.bin - too large]" in handled[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_on_media_message_uses_server_limit_when_smaller_than_local_limit(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr("nanobot.channels.matrix.get_data_dir", lambda: tmp_path)
+
+    channel = MatrixChannel(_make_config(max_media_bytes=10), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    client.content_repository_config_response = SimpleNamespace(upload_size=3)
+    channel.client = client
+
+    handled: list[dict[str, object]] = []
+
+    async def _fake_handle_message(**kwargs) -> None:
+        handled.append(kwargs)
+
+    channel._handle_message = _fake_handle_message  # type: ignore[method-assign]
+
+    room = SimpleNamespace(room_id="!room:matrix.org", display_name="Test room", member_count=2)
+    event = SimpleNamespace(
+        sender="@alice:matrix.org",
+        body="large.bin",
+        url="mxc://example.org/large",
+        event_id="$event2_server",
+        source={"content": {"msgtype": "m.file", "info": {"size": 5}}},
     )
 
     await channel._on_media_message(room, event)
@@ -671,6 +753,189 @@ async def test_send_clears_typing_after_send() -> None:
     }
     assert client.room_send_calls[0]["ignore_unverified_devices"] is True
     assert client.typing_calls[-1] == ("!room:matrix.org", False, TYPING_NOTICE_TIMEOUT_MS)
+
+
+@pytest.mark.asyncio
+async def test_send_uploads_media_and_sends_file_event(tmp_path) -> None:
+    channel = MatrixChannel(_make_config(), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    channel.client = client
+
+    file_path = tmp_path / "test.txt"
+    file_path.write_text("hello", encoding="utf-8")
+
+    await channel.send(
+        OutboundMessage(
+            channel="matrix",
+            chat_id="!room:matrix.org",
+            content="Please review.",
+            media=[str(file_path)],
+        )
+    )
+
+    assert len(client.upload_calls) == 1
+    assert not isinstance(client.upload_calls[0]["data_provider"], (bytes, bytearray))
+    assert hasattr(client.upload_calls[0]["data_provider"], "read")
+    assert client.upload_calls[0]["filename"] == "test.txt"
+    assert client.upload_calls[0]["filesize"] == 5
+    assert len(client.room_send_calls) == 2
+    assert client.room_send_calls[0]["content"]["msgtype"] == "m.file"
+    assert client.room_send_calls[0]["content"]["url"] == "mxc://example.org/uploaded"
+    assert client.room_send_calls[1]["content"]["body"] == "Please review."
+
+
+@pytest.mark.asyncio
+async def test_send_uses_encrypted_media_payload_in_encrypted_room(tmp_path) -> None:
+    channel = MatrixChannel(_make_config(e2ee_enabled=True), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    client.rooms["!encrypted:matrix.org"] = SimpleNamespace(encrypted=True)
+    channel.client = client
+
+    file_path = tmp_path / "secret.txt"
+    file_path.write_text("topsecret", encoding="utf-8")
+
+    await channel.send(
+        OutboundMessage(
+            channel="matrix",
+            chat_id="!encrypted:matrix.org",
+            content="",
+            media=[str(file_path)],
+        )
+    )
+
+    assert len(client.upload_calls) == 1
+    assert client.upload_calls[0]["encrypt"] is True
+    assert len(client.room_send_calls) == 1
+    content = client.room_send_calls[0]["content"]
+    assert content["msgtype"] == "m.file"
+    assert "file" in content
+    assert "url" not in content
+    assert content["file"]["url"] == "mxc://example.org/uploaded"
+    assert content["file"]["hashes"]["sha256"] == "hash"
+
+
+@pytest.mark.asyncio
+async def test_send_does_not_parse_attachment_marker_without_media(tmp_path) -> None:
+    channel = MatrixChannel(_make_config(), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    channel.client = client
+
+    missing_path = tmp_path / "missing.txt"
+    await channel.send(
+        OutboundMessage(
+            channel="matrix",
+            chat_id="!room:matrix.org",
+            content=f"[attachment: {missing_path}]",
+        )
+    )
+
+    assert client.upload_calls == []
+    assert len(client.room_send_calls) == 1
+    assert client.room_send_calls[0]["content"]["body"] == f"[attachment: {missing_path}]"
+
+
+@pytest.mark.asyncio
+async def test_send_workspace_restriction_blocks_external_attachment(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    file_path = tmp_path / "external.txt"
+    file_path.write_text("outside", encoding="utf-8")
+
+    channel = MatrixChannel(
+        _make_config(),
+        MessageBus(),
+        restrict_to_workspace=True,
+        workspace=workspace,
+    )
+    client = _FakeAsyncClient("", "", "", None)
+    channel.client = client
+
+    await channel.send(
+        OutboundMessage(
+            channel="matrix",
+            chat_id="!room:matrix.org",
+            content="",
+            media=[str(file_path)],
+        )
+    )
+
+    assert client.upload_calls == []
+    assert len(client.room_send_calls) == 1
+    assert client.room_send_calls[0]["content"]["body"] == "[attachment: external.txt - upload failed]"
+
+
+@pytest.mark.asyncio
+async def test_send_handles_upload_exception_and_reports_failure(tmp_path) -> None:
+    channel = MatrixChannel(_make_config(), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    client.raise_on_upload = True
+    channel.client = client
+
+    file_path = tmp_path / "broken.txt"
+    file_path.write_text("hello", encoding="utf-8")
+
+    await channel.send(
+        OutboundMessage(
+            channel="matrix",
+            chat_id="!room:matrix.org",
+            content="Please review.",
+            media=[str(file_path)],
+        )
+    )
+
+    assert len(client.upload_calls) == 0
+    assert len(client.room_send_calls) == 1
+    assert (
+        client.room_send_calls[0]["content"]["body"]
+        == "Please review.\n[attachment: broken.txt - upload failed]"
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_uses_server_upload_limit_when_smaller_than_local_limit(tmp_path) -> None:
+    channel = MatrixChannel(_make_config(max_media_bytes=10), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    client.content_repository_config_response = SimpleNamespace(upload_size=3)
+    channel.client = client
+
+    file_path = tmp_path / "tiny.txt"
+    file_path.write_text("hello", encoding="utf-8")
+
+    await channel.send(
+        OutboundMessage(
+            channel="matrix",
+            chat_id="!room:matrix.org",
+            content="",
+            media=[str(file_path)],
+        )
+    )
+
+    assert client.upload_calls == []
+    assert len(client.room_send_calls) == 1
+    assert client.room_send_calls[0]["content"]["body"] == "[attachment: tiny.txt - too large]"
+
+
+@pytest.mark.asyncio
+async def test_send_blocks_all_outbound_media_when_limit_is_zero(tmp_path) -> None:
+    channel = MatrixChannel(_make_config(max_media_bytes=0), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    channel.client = client
+
+    file_path = tmp_path / "empty.txt"
+    file_path.write_bytes(b"")
+
+    await channel.send(
+        OutboundMessage(
+            channel="matrix",
+            chat_id="!room:matrix.org",
+            content="",
+            media=[str(file_path)],
+        )
+    )
+
+    assert client.upload_calls == []
+    assert len(client.room_send_calls) == 1
+    assert client.room_send_calls[0]["content"]["body"] == "[attachment: empty.txt - too large]"
 
 
 @pytest.mark.asyncio

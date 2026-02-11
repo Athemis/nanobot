@@ -102,7 +102,9 @@ class ChannelManager:
                 from nanobot.channels.matrix import MatrixChannel
                 self.channels["matrix"] = MatrixChannel(
                     self.config.channels.matrix,
-                    self.bus
+                    self.bus,
+                    restrict_to_workspace=self.config.tools.restrict_to_workspace,
+                    workspace=self.config.workspace_path,
                 )
                 logger.info("Matrix channel enabled")
             except ImportError as e:
