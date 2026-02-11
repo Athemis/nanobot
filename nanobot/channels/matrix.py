@@ -374,7 +374,6 @@ class MatrixChannel(BaseChannel):
         mime: str,
         size_bytes: int,
         mxc_url: str,
-        encryption_info: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Build Matrix content payload for an uploaded file/image/audio/video."""
         msgtype = "m.file"
@@ -385,34 +384,17 @@ class MatrixChannel(BaseChannel):
         elif mime.startswith("video/"):
             msgtype = "m.video"
 
-        content: dict[str, Any] = {
+        return {
             "msgtype": msgtype,
             "body": filename,
             "filename": filename,
+            "url": mxc_url,
             "info": {
                 "mimetype": mime,
                 "size": size_bytes,
             },
             "m.mentions": {},
         }
-
-        if encryption_info:
-            # Encrypted media events use `file` metadata (with url/hash/key/iv),
-            # while unencrypted media events use top-level `url`.
-            file_info = dict(encryption_info)
-            file_info["url"] = mxc_url
-            content["file"] = file_info
-        else:
-            content["url"] = mxc_url
-
-        return content
-
-    def _is_encrypted_room(self, room_id: str) -> bool:
-        """Return True if the Matrix room is known as encrypted."""
-        if not self.client:
-            return False
-        room = getattr(self.client, "rooms", {}).get(room_id)
-        return bool(getattr(room, "encrypted", False))
 
     async def _send_room_content(self, room_id: str, content: dict[str, Any]) -> None:
         """Send Matrix m.room.message content with configured E2EE send options."""
@@ -469,10 +451,10 @@ class MatrixChannel(BaseChannel):
         Compute effective Matrix media size cap.
 
         `m.upload.size` (if advertised) is treated as the homeserver-side cap.
-        `maxInboundMediaBytes` is a local hard limit/fallback. Using the stricter value
+        `maxMediaBytes` is a local hard limit/fallback. Using the stricter value
         keeps resource usage predictable while honoring server constraints.
         """
-        local_limit = max(int(self._configured_media_limit_bytes()), 0)
+        local_limit = max(int(self.config.max_media_bytes), 0)
         server_limit = await self._resolve_server_upload_limit_bytes()
         if server_limit is None:
             return local_limit
@@ -480,21 +462,7 @@ class MatrixChannel(BaseChannel):
             return 0
         return min(local_limit, server_limit)
 
-    def _configured_media_limit_bytes(self) -> int:
-        """Resolve the configured local media limit with backward compatibility."""
-        for name in ("max_inbound_media_bytes", "max_media_bytes"):
-            value = getattr(self.config, name, None)
-            if isinstance(value, int):
-                return value
-        return 0
-
-    async def _upload_and_send_attachment(
-        self,
-        room_id: str,
-        path: Path,
-        limit_bytes: int,
-        relates_to: dict[str, Any] | None = None,
-    ) -> str | None:
+    async def _upload_and_send_attachment(self, room_id: str, path: Path, limit_bytes: int) -> str | None:
         """Upload one local file to Matrix and send it as a media message."""
         if not self.client:
             return MATRIX_ATTACHMENT_UPLOAD_FAILED_TEMPLATE.format(path.name or MATRIX_DEFAULT_ATTACHMENT_NAME)
@@ -524,15 +492,7 @@ class MatrixChannel(BaseChannel):
             )
             return MATRIX_ATTACHMENT_UPLOAD_FAILED_TEMPLATE.format(filename)
 
-        if limit_bytes <= 0:
-            logger.warning(
-                "Matrix outbound attachment skipped: media limit {} blocks all uploads for {}",
-                limit_bytes,
-                resolved,
-            )
-            return MATRIX_ATTACHMENT_TOO_LARGE_TEMPLATE.format(filename)
-
-        if size_bytes > limit_bytes:
+        if limit_bytes and size_bytes > limit_bytes:
             logger.warning(
                 "Matrix outbound attachment skipped: {} bytes exceeds limit {} for {}",
                 size_bytes,
@@ -541,29 +501,24 @@ class MatrixChannel(BaseChannel):
             )
             return MATRIX_ATTACHMENT_TOO_LARGE_TEMPLATE.format(filename)
 
-        mime = mimetypes.guess_type(filename, strict=False)[0] or "application/octet-stream"
-        encrypt_upload = self.config.e2ee_enabled and self._is_encrypted_room(room_id)
         try:
-            with resolved.open("rb") as data_provider:
-                upload_result = await self.client.upload(
-                    data_provider,
-                    content_type=mime,
-                    filename=filename,
-                    encrypt=encrypt_upload,
-                    filesize=size_bytes,
-                )
-        except Exception as e:
+            data = resolved.read_bytes()
+        except OSError as e:
             logger.warning(
-                "Matrix outbound attachment upload failed for {} ({}): {}",
+                "Matrix outbound attachment read failed for {} ({}): {}",
                 resolved,
                 type(e).__name__,
                 str(e),
             )
             return MATRIX_ATTACHMENT_UPLOAD_FAILED_TEMPLATE.format(filename)
-        upload_response = upload_result[0] if isinstance(upload_result, tuple) else upload_result
-        encryption_info: dict[str, Any] | None = None
-        if isinstance(upload_result, tuple) and isinstance(upload_result[1], dict):
-            encryption_info = upload_result[1]
+
+        mime = mimetypes.guess_type(filename, strict=False)[0] or "application/octet-stream"
+        upload_response = await self.client.upload(
+            data,
+            content_type=mime,
+            filename=filename,
+            filesize=len(data),
+        )
         if isinstance(upload_response, UploadError):
             logger.warning(
                 "Matrix outbound attachment upload failed for {}: {}",
@@ -584,12 +539,9 @@ class MatrixChannel(BaseChannel):
         content = self._build_outbound_attachment_content(
             filename=filename,
             mime=mime,
-            size_bytes=size_bytes,
+            size_bytes=len(data),
             mxc_url=mxc_url,
-            encryption_info=encryption_info,
         )
-        if relates_to:
-            content["m.relates_to"] = relates_to
         try:
             await self._send_room_content(room_id, content)
         except Exception as e:
@@ -608,7 +560,6 @@ class MatrixChannel(BaseChannel):
 
         text = msg.content or ""
         candidates = self._collect_outbound_media_candidates(msg.media)
-        relates_to = self._build_thread_relates_to(msg.metadata)
 
         try:
             failures: list[str] = []
@@ -620,7 +571,6 @@ class MatrixChannel(BaseChannel):
                         room_id=msg.chat_id,
                         path=path,
                         limit_bytes=limit_bytes,
-                        relates_to=relates_to,
                     )
                     if failure_marker:
                         failures.append(failure_marker)
@@ -632,10 +582,7 @@ class MatrixChannel(BaseChannel):
                     text = "\n".join(failures)
 
             if text or not candidates:
-                content = _build_matrix_text_content(text)
-                if relates_to:
-                    content["m.relates_to"] = relates_to
-                await self._send_room_content(msg.chat_id, content)
+                await self._send_room_content(msg.chat_id, _build_matrix_text_content(text))
         finally:
             await self._stop_typing_keepalive(msg.chat_id, clear_typing=True)
 
