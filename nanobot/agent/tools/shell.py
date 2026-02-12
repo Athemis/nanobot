@@ -27,16 +27,18 @@ class ExecTool(Tool):
             r"\bdel\s+/[fq]\b",              # del /f, del /q
             r"\brmdir\s+/s\b",               # rmdir /s
             (
-                r"(?im)(?:^|;\s*|&&\s*|\|\|\s*|\|\s*)\s*"
-                r"(?:(?:sudo|doas)\s+|cmd(?:\.exe)?\s+/c\s+|(?:/usr/bin/)?env\s+)*"
+                r"(?im)(?:^|;\s*|&&\s*|\|\|\s*|\|\s*|\(\s*|\$\(\s*)\s*"
+                r"(?:(?:sudo|doas)\s+|cmd(?:\.exe)?\s+/c\s+|(?:/usr/bin/)?env\s+|"
+                r"(?:bash|sh|zsh|ksh|dash)(?:\.exe)?\s+-[^\s]*c\s+[\"']?\s*)*"
                 r"(?:[\w.:/\\-]+[/\\])?"
                 r"(?:mkfs(?:\.\w+)?|diskpart|format)\b(?!\s*=)"
             ),                               # disk operations
             r"\bdd\s+if=",                   # dd
             r">\s*/dev/sd",                  # write to disk
             (
-                r"(?im)(?:^|;\s*|&&\s*|\|\|\s*|\|\s*)\s*"
-                r"(?:(?:sudo|doas)\s+|cmd(?:\.exe)?\s+/c\s+|(?:/usr/bin/)?env\s+)*"
+                r"(?im)(?:^|;\s*|&&\s*|\|\|\s*|\|\s*|\(\s*|\$\(\s*)\s*"
+                r"(?:(?:sudo|doas)\s+|cmd(?:\.exe)?\s+/c\s+|(?:/usr/bin/)?env\s+|"
+                r"(?:bash|sh|zsh|ksh|dash)(?:\.exe)?\s+-[^\s]*c\s+[\"']?\s*)*"
                 r"(?:[\w.:/\\-]+[/\\])?"
                 r"(?:shutdown(?:\.\w+)?|reboot|poweroff)\b(?!\s*=)"
             ),                               # system power
