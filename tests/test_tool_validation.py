@@ -3,6 +3,7 @@ from typing import Any
 from nanobot.agent.tools.web import WebSearchTool
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.config.loader import _migrate_config
 from nanobot.config.schema import WebSearchConfig
 
 
@@ -95,9 +96,51 @@ async def test_web_search_no_fallback_returns_provider_error() -> None:
         config=WebSearchConfig(
             provider="brave",
             api_key="",
-            fallback_to_duckduckgo_on_missing_key=False,
+            fallback_to_duckduckgo=False,
         )
     )
 
     result = await tool.execute(query="fallback", count=1)
     assert result == "Error: BRAVE_API_KEY not configured"
+
+
+def test_migrate_config_moves_flat_web_search_provider_keys() -> None:
+    data = {
+        "tools": {
+            "web": {
+                "search": {
+                    "tavilyApiKey": "tvly-key",
+                    "searxngBaseUrl": "https://searx.example",
+                    "fallbackToDuckduckgoOnMissingKey": False,
+                }
+            }
+        }
+    }
+
+    migrated = _migrate_config(data)
+    search = migrated["tools"]["web"]["search"]
+
+    assert search["tavily"]["apiKey"] == "tvly-key"
+    assert search["searxng"]["baseUrl"] == "https://searx.example"
+    assert search["fallbackToDuckduckgo"] is False
+
+
+def test_migrate_config_handles_non_dict_nested_provider_nodes() -> None:
+    data = {
+        "tools": {
+            "web": {
+                "search": {
+                    "tavily": "not-a-dict",
+                    "searxng": ["not", "a", "dict"],
+                    "tavilyApiKey": "tvly-key",
+                    "searxngBaseUrl": "https://searx.example",
+                }
+            }
+        }
+    }
+
+    migrated = _migrate_config(data)
+    search = migrated["tools"]["web"]["search"]
+
+    assert search["tavily"]["apiKey"] == "tvly-key"
+    assert search["searxng"]["baseUrl"] == "https://searx.example"

@@ -69,6 +69,33 @@ def _migrate_config(data: dict) -> dict:
     exec_cfg = tools.get("exec", {})
     if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
         tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
+
+    # Move tools.web.search.* flat provider keys to nested provider configs
+    web_cfg = tools.get("web", {})
+    if not isinstance(web_cfg, dict):
+        return data
+
+    search_cfg = web_cfg.get("search", {})
+    if not isinstance(search_cfg, dict):
+        return data
+
+    if "tavilyApiKey" in search_cfg:
+        tavily_cfg = search_cfg.get("tavily")
+        if not isinstance(tavily_cfg, dict):
+            tavily_cfg = {}
+            search_cfg["tavily"] = tavily_cfg
+        tavily_cfg.setdefault("apiKey", search_cfg.pop("tavilyApiKey"))
+
+    if "searxngBaseUrl" in search_cfg:
+        searxng_cfg = search_cfg.get("searxng")
+        if not isinstance(searxng_cfg, dict):
+            searxng_cfg = {}
+            search_cfg["searxng"] = searxng_cfg
+        searxng_cfg.setdefault("baseUrl", search_cfg.pop("searxngBaseUrl"))
+
+    if "fallbackToDuckduckgoOnMissingKey" in search_cfg and "fallbackToDuckduckgo" not in search_cfg:
+        search_cfg["fallbackToDuckduckgo"] = search_cfg.pop("fallbackToDuckduckgoOnMissingKey")
+
     return data
 
 

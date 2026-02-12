@@ -126,10 +126,10 @@ For OpenRouter - recommended for global users:
 Config keys:
 - `tools.web.search.provider`: `brave` (default), `duckduckgo`, `tavily`, or `searxng`
 - `tools.web.search.apiKey` (or `BRAVE_API_KEY`)
-- `tools.web.search.tavilyApiKey` (or `TAVILY_API_KEY`)
-- `tools.web.search.searxngBaseUrl` (or `SEARXNG_BASE_URL`)
-- `searxngBaseUrl` should be the server base URL (nanobot appends `/search`)
-- `tools.web.search.fallbackToDuckduckgoOnMissingKey` (default: `true`)
+- `tools.web.search.tavily.apiKey` (or `TAVILY_API_KEY`)
+- `tools.web.search.searxng.baseUrl` (or `SEARXNG_BASE_URL`)
+- `searxng.baseUrl` should be the server base URL (nanobot appends `/search`)
+- `tools.web.search.fallbackToDuckduckgo` (default: `true`)
 
 Use DuckDuckGo (no API key required):
 
@@ -154,7 +154,9 @@ Use Tavily:
     "web": {
       "search": {
         "provider": "tavily",
-        "tavilyApiKey": "tvly-...",
+        "tavily": {
+          "apiKey": "tvly-..."
+        },
         "maxResults": 5
       }
     }
@@ -170,7 +172,9 @@ Use SearXNG:
     "web": {
       "search": {
         "provider": "searxng",
-        "searxngBaseUrl": "https://searx.example",
+        "searxng": {
+          "baseUrl": "https://searx.example"
+        },
         "maxResults": 5
       }
     }
@@ -186,7 +190,7 @@ Disable automatic DuckDuckGo fallback on missing keys:
     "web": {
       "search": {
         "provider": "brave",
-        "fallbackToDuckduckgoOnMissingKey": false
+        "fallbackToDuckduckgo": false
       }
     }
   }

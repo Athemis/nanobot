@@ -55,9 +55,10 @@ class AgentLoop:
         self.workspace = workspace
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
-        self.web_search_config = web_search_config or WebSearchConfig(api_key=brave_api_key or "")
-        if brave_api_key is not None:
-            self.web_search_config.api_key = brave_api_key
+        self.web_search_config = WebSearchConfig.from_legacy(
+            config=web_search_config,
+            brave_api_key=brave_api_key,
+        )
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace

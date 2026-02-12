@@ -1,5 +1,6 @@
 """Configuration schema using Pydantic."""
 
+import os
 from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, Field, ConfigDict
@@ -8,7 +9,6 @@ from pydantic_settings import BaseSettings
 
 class WhatsAppConfig(BaseModel):
     """WhatsApp channel configuration."""
-
     enabled: bool = False
     bridge_url: str = "ws://localhost:3001"
     allow_from: list[str] = Field(default_factory=list)  # Allowed phone numbers
@@ -16,18 +16,14 @@ class WhatsAppConfig(BaseModel):
 
 class TelegramConfig(BaseModel):
     """Telegram channel configuration."""
-
     enabled: bool = False
     token: str = ""  # Bot token from @BotFather
     allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs or usernames
-    proxy: str | None = (
-        None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
-    )
+    proxy: str | None = None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
 
 
 class FeishuConfig(BaseModel):
     """Feishu/Lark channel configuration using WebSocket long connection."""
-
     enabled: bool = False
     app_id: str = ""  # App ID from Feishu Open Platform
     app_secret: str = ""  # App Secret from Feishu Open Platform
@@ -38,7 +34,6 @@ class FeishuConfig(BaseModel):
 
 class DingTalkConfig(BaseModel):
     """DingTalk channel configuration using Stream mode."""
-
     enabled: bool = False
     client_id: str = ""  # AppKey
     client_secret: str = ""  # AppSecret
@@ -47,17 +42,14 @@ class DingTalkConfig(BaseModel):
 
 class DiscordConfig(BaseModel):
     """Discord channel configuration."""
-
     enabled: bool = False
     token: str = ""  # Bot token from Discord Developer Portal
     allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs
     gateway_url: str = "wss://gateway.discord.gg/?v=10&encoding=json"
     intents: int = 37377  # GUILDS + GUILD_MESSAGES + DIRECT_MESSAGES + MESSAGE_CONTENT
 
-
 class EmailConfig(BaseModel):
     """Email channel configuration (IMAP inbound + SMTP outbound)."""
-
     enabled: bool = False
     consent_granted: bool = False  # Explicit owner permission to access mailbox data
 
@@ -79,9 +71,7 @@ class EmailConfig(BaseModel):
     from_address: str = ""
 
     # Behavior
-    auto_reply_enabled: bool = (
-        True  # If false, inbound email is read but no automatic reply is sent
-    )
+    auto_reply_enabled: bool = True  # If false, inbound email is read but no automatic reply is sent
     poll_interval_seconds: int = 30
     mark_seen: bool = True
     max_body_chars: int = 12000
@@ -91,19 +81,16 @@ class EmailConfig(BaseModel):
 
 class MochatMentionConfig(BaseModel):
     """Mochat mention behavior configuration."""
-
     require_in_groups: bool = False
 
 
 class MochatGroupRule(BaseModel):
     """Mochat per-group mention requirement."""
-
     require_mention: bool = False
 
 
 class MochatConfig(BaseModel):
     """Mochat channel configuration."""
-
     enabled: bool = False
     base_url: str = "https://mochat.io"
     socket_url: str = ""
@@ -130,7 +117,6 @@ class MochatConfig(BaseModel):
 
 class SlackDMConfig(BaseModel):
     """Slack DM policy configuration."""
-
     enabled: bool = True
     policy: str = "open"  # "open" or "allowlist"
     allow_from: list[str] = Field(default_factory=list)  # Allowed Slack user IDs
@@ -138,7 +124,6 @@ class SlackDMConfig(BaseModel):
 
 class SlackConfig(BaseModel):
     """Slack channel configuration."""
-
     enabled: bool = False
     mode: str = "socket"  # "socket" supported
     webhook_path: str = "/slack/events"
@@ -152,18 +137,14 @@ class SlackConfig(BaseModel):
 
 class QQConfig(BaseModel):
     """QQ channel configuration using botpy SDK."""
-
     enabled: bool = False
     app_id: str = ""  # 机器人 ID (AppID) from q.qq.com
     secret: str = ""  # 机器人密钥 (AppSecret) from q.qq.com
-    allow_from: list[str] = Field(
-        default_factory=list
-    )  # Allowed user openids (empty = public access)
+    allow_from: list[str] = Field(default_factory=list)  # Allowed user openids (empty = public access)
 
 
 class ChannelsConfig(BaseModel):
     """Configuration for chat channels."""
-
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
@@ -177,7 +158,6 @@ class ChannelsConfig(BaseModel):
 
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
-
     workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
     max_tokens: int = 8192
@@ -187,13 +167,11 @@ class AgentDefaults(BaseModel):
 
 class AgentsConfig(BaseModel):
     """Agent configuration."""
-
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
 
 
 class ProviderConfig(BaseModel):
     """LLM provider configuration."""
-
     api_key: str = ""
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
@@ -201,7 +179,6 @@ class ProviderConfig(BaseModel):
 
 class ProvidersConfig(BaseModel):
     """Configuration for LLM providers."""
-
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -218,37 +195,68 @@ class ProvidersConfig(BaseModel):
 
 class GatewayConfig(BaseModel):
     """Gateway/server configuration."""
-
     host: str = "0.0.0.0"
     port: int = 18790
 
 
+class TavilyConfig(BaseModel):
+    """Tavily search provider configuration."""
+    api_key: str = ""
+
+
+class SearxngConfig(BaseModel):
+    """SearXNG search provider configuration."""
+    base_url: str = ""
+
+
 class WebSearchConfig(BaseModel):
     """Web search tool configuration."""
-
     provider: Literal["brave", "duckduckgo", "tavily", "searxng"] = "brave"
     api_key: str = ""  # Brave Search API key
-    tavily_api_key: str = ""  # Tavily API key
-    searxng_base_url: str = ""  # SearXNG base URL, e.g. https://searx.example
-    fallback_to_duckduckgo_on_missing_key: bool = True
+    fallback_to_duckduckgo: bool = True
+    tavily: TavilyConfig = Field(default_factory=TavilyConfig)
+    searxng: SearxngConfig = Field(default_factory=SearxngConfig)
     max_results: int = 5
+
+    def resolve_env(self) -> "WebSearchConfig":
+        """Resolve provider credentials from environment once."""
+        if not self.api_key:
+            self.api_key = os.environ.get("BRAVE_API_KEY", "")
+        if not self.tavily.api_key:
+            self.tavily.api_key = os.environ.get("TAVILY_API_KEY", "")
+        if not self.searxng.base_url:
+            self.searxng.base_url = os.environ.get("SEARXNG_BASE_URL", "")
+        return self
+
+    @classmethod
+    def from_legacy(
+        cls,
+        config: "WebSearchConfig | None" = None,
+        brave_api_key: str | None = None,
+        max_results: int | None = None,
+    ) -> "WebSearchConfig":
+        """Build search config from constructor overrides and env defaults."""
+        cfg = config.model_copy(deep=True) if config is not None else cls()
+        if brave_api_key is not None:
+            cfg.api_key = brave_api_key
+        if max_results is not None:
+            cfg.max_results = max_results
+        cfg.resolve_env()
+        return cfg
 
 
 class WebToolsConfig(BaseModel):
     """Web tools configuration."""
-
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
 class ExecToolConfig(BaseModel):
     """Shell exec tool configuration."""
-
     timeout: int = 60
 
 
 class ToolsConfig(BaseModel):
     """Tools configuration."""
-
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
@@ -256,24 +264,20 @@ class ToolsConfig(BaseModel):
 
 class Config(BaseSettings):
     """Root configuration for nanobot."""
-
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
-
+    
     @property
     def workspace_path(self) -> Path:
         """Get expanded workspace path."""
         return Path(self.agents.defaults.workspace).expanduser()
-
-    def _match_provider(
-        self, model: str | None = None
-    ) -> tuple["ProviderConfig | None", str | None]:
+    
+    def _match_provider(self, model: str | None = None) -> tuple["ProviderConfig | None", str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
         from nanobot.providers.registry import PROVIDERS
-
         model_lower = (model or self.agents.defaults.model).lower()
 
         # Match by keyword (order follows PROVIDERS registry)
@@ -303,11 +307,10 @@ class Config(BaseSettings):
         """Get API key for the given model. Falls back to first available key."""
         p = self.get_provider(model)
         return p.api_key if p else None
-
+    
     def get_api_base(self, model: str | None = None) -> str | None:
         """Get API base URL for the given model. Applies default URLs for known gateways."""
         from nanobot.providers.registry import find_by_name
-
         p, name = self._match_provider(model)
         if p and p.api_base:
             return p.api_base
@@ -319,5 +322,8 @@ class Config(BaseSettings):
             if spec and spec.is_gateway and spec.default_api_base:
                 return spec.default_api_base
         return None
-
-    model_config = ConfigDict(env_prefix="NANOBOT_", env_nested_delimiter="__")
+    
+    model_config = ConfigDict(
+        env_prefix="NANOBOT_",
+        env_nested_delimiter="__"
+    )

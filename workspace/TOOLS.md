@@ -55,10 +55,10 @@ Returns search results with titles, URLs, and snippets.
 Config:
 - `tools.web.search.provider` (default: `brave`)
 - Brave key: `tools.web.search.apiKey` (or `BRAVE_API_KEY`)
-- Tavily key: `tools.web.search.tavilyApiKey` (or `TAVILY_API_KEY`)
-- SearXNG base URL: `tools.web.search.searxngBaseUrl` (or `SEARXNG_BASE_URL`)
-- `searxngBaseUrl` should be the server base URL (nanobot appends `/search`)
-- `tools.web.search.fallbackToDuckduckgoOnMissingKey` (default: `true`)
+- Tavily key: `tools.web.search.tavily.apiKey` (or `TAVILY_API_KEY`)
+- SearXNG base URL: `tools.web.search.searxng.baseUrl` (or `SEARXNG_BASE_URL`)
+- `searxng.baseUrl` should be the server base URL (nanobot appends `/search`)
+- `tools.web.search.fallbackToDuckduckgo` (default: `true`)
 - DuckDuckGo does not require an API key.
 
 ### web_fetch

@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Literal
 
 from nanobot.agent.tools.web import WebSearchTool
-from nanobot.config.schema import WebSearchConfig
+from nanobot.config.schema import SearxngConfig, TavilyConfig, WebSearchConfig
 
 
 def _tool(config: WebSearchConfig, handler) -> WebSearchTool:
@@ -55,7 +55,7 @@ def _assert_tavily_request(request: httpx.Request) -> bool:
         ),
         (
             "tavily",
-            {"tavily_api_key": "tavily-key"},
+            {"tavily": TavilyConfig(api_key="tavily-key")},
             "openclaw",
             2,
             _assert_tavily_request,
@@ -75,7 +75,7 @@ def _assert_tavily_request(request: httpx.Request) -> bool:
         ),
         (
             "searxng",
-            {"searxng_base_url": "https://searx.example"},
+            {"searxng": SearxngConfig(base_url="https://searx.example")},
             "nanobot",
             1,
             lambda request: (
@@ -118,7 +118,7 @@ async def test_web_search_provider_formats_results(
 
 
 @pytest.mark.asyncio
-async def test_web_search_legacy_constructor_still_works() -> None:
+async def test_web_search_constructor_overrides_still_work() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -132,9 +132,9 @@ async def test_web_search_legacy_constructor_still_works() -> None:
         )
 
     tool = WebSearchTool(
-        api_key="legacy-key", max_results=3, transport=httpx.MockTransport(handler)
+        api_key="constructor-key", max_results=3, transport=httpx.MockTransport(handler)
     )
-    result = await tool.execute(query="legacy", count=1)
+    result = await tool.execute(query="constructor", count=1)
     assert "1. Legacy" in result
 
 
@@ -150,7 +150,7 @@ async def test_web_search_legacy_constructor_still_works() -> None:
         ),
         (
             "tavily",
-            WebSearchConfig(provider="tavily", tavily_api_key="", max_results=5),
+            WebSearchConfig(provider="tavily", tavily=TavilyConfig(api_key=""), max_results=5),
             "TAVILY_API_KEY",
             "Tavily Fallback",
         ),
@@ -165,17 +165,27 @@ async def test_web_search_missing_key_falls_back_to_duckduckgo(
 ) -> None:
     monkeypatch.delenv(missing_env, raising=False)
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "html.duckduckgo.com"
-        html = (
-            "<html><body>"
-            f'<a class="result__a" href="https://example.com/{provider}-fallback">{expected_title}</a>'
-            '<a class="result__snippet">Fallback snippet</a>'
-            "</body></html>"
-        )
-        return httpx.Response(200, text=html)
+    called = False
 
-    result = await _tool(config, handler).execute(query="fallback", count=1)
+    class FakeDDGS:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def text(self, keywords: str, max_results: int):
+            nonlocal called
+            called = True
+            return [
+                {
+                    "title": expected_title,
+                    "href": f"https://example.com/{provider}-fallback",
+                    "body": "Fallback snippet",
+                }
+            ]
+
+    monkeypatch.setattr("nanobot.agent.tools.web.DDGS", FakeDDGS, raising=False)
+
+    result = await WebSearchTool(config=config).execute(query="fallback", count=1)
+    assert called
     assert "Using DuckDuckGo fallback" in result
     assert f"1. {expected_title}" in result
 
@@ -189,7 +199,7 @@ async def test_web_search_brave_missing_key_without_fallback_returns_error(
         config=WebSearchConfig(
             provider="brave",
             api_key="",
-            fallback_to_duckduckgo_on_missing_key=False,
+            fallback_to_duckduckgo=False,
         )
     )
 
@@ -200,7 +210,9 @@ async def test_web_search_brave_missing_key_without_fallback_returns_error(
 @pytest.mark.asyncio
 async def test_web_search_searxng_missing_base_url_returns_error() -> None:
     tool = WebSearchTool(
-        config=WebSearchConfig(provider="searxng", searxng_base_url="", max_results=5)
+        config=WebSearchConfig(
+            provider="searxng", searxng=SearxngConfig(base_url=""), max_results=5
+        )
     )
 
     result = await tool.execute(query="nanobot", count=1)
@@ -230,22 +242,67 @@ async def test_web_search_searxng_uses_env_base_url(
         )
 
     result = await _tool(
-        WebSearchConfig(provider="searxng", searxng_base_url="", max_results=5),
+        WebSearchConfig(provider="searxng", searxng=SearxngConfig(base_url=""), max_results=5),
         handler,
     ).execute(query="nanobot", count=1)
     assert "1. env result" in result
 
 
 @pytest.mark.asyncio
-async def test_web_search_provider_dispatch_map_can_be_extended() -> None:
-    config = WebSearchConfig(provider="brave", max_results=5)
-    config.provider = "custom"  # type: ignore[assignment]
+async def test_web_search_register_custom_provider() -> None:
+    config = WebSearchConfig(provider="brave", max_results=5).model_copy(
+        update={"provider": "custom"}
+    )
     tool = WebSearchTool(config=config)
 
     async def _custom_provider(query: str, n: int) -> str:
         return f"custom:{query}:{n}"
 
-    tool._provider_searchers["custom"] = _custom_provider  # type: ignore[attr-defined]
+    tool.register_provider("custom", _custom_provider)
 
     result = await tool.execute(query="nanobot", count=2)
     assert result == "custom:nanobot:2"
+
+
+def test_web_search_from_legacy_does_not_mutate_input_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("SEARXNG_BASE_URL", raising=False)
+
+    original = WebSearchConfig(api_key="", max_results=5)
+    derived = WebSearchConfig.from_legacy(
+        config=original,
+        brave_api_key="legacy-key",
+        max_results=2,
+    )
+
+    assert original is not derived
+    assert original.api_key == ""
+    assert original.max_results == 5
+    assert derived.api_key == "legacy-key"
+    assert derived.max_results == 2
+
+
+@pytest.mark.asyncio
+async def test_web_search_duckduckgo_uses_injected_ddgs_factory() -> None:
+    class FakeDDGS:
+        def text(self, keywords: str, max_results: int):
+            assert keywords == "nanobot"
+            assert max_results == 1
+            return [
+                {
+                    "title": "NanoBot result",
+                    "href": "https://example.com/nanobot",
+                    "body": "Search content",
+                }
+            ]
+
+    tool = WebSearchTool(
+        config=WebSearchConfig(provider="duckduckgo", max_results=5),
+        ddgs_factory=lambda: FakeDDGS(),
+    )
+
+    result = await tool.execute(query="nanobot", count=1)
+    assert "1. NanoBot result" in result
