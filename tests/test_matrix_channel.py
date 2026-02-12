@@ -884,6 +884,34 @@ async def test_send_uploads_media_and_sends_file_event(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_adds_thread_relates_to_for_thread_metadata() -> None:
+    channel = MatrixChannel(_make_config(), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    channel.client = client
+
+    metadata = {
+        "thread_root_event_id": "$root1",
+        "thread_reply_to_event_id": "$reply1",
+    }
+    await channel.send(
+        OutboundMessage(
+            channel="matrix",
+            chat_id="!room:matrix.org",
+            content="Hi",
+            metadata=metadata,
+        )
+    )
+
+    content = client.room_send_calls[0]["content"]
+    assert content["m.relates_to"] == {
+        "rel_type": "m.thread",
+        "event_id": "$root1",
+        "m.in_reply_to": {"event_id": "$reply1"},
+        "is_falling_back": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_send_uses_encrypted_media_payload_in_encrypted_room(tmp_path) -> None:
     channel = MatrixChannel(_make_config(e2ee_enabled=True), MessageBus())
     client = _FakeAsyncClient("", "", "", None)
@@ -931,6 +959,50 @@ async def test_send_does_not_parse_attachment_marker_without_media(tmp_path) -> 
     assert client.upload_calls == []
     assert len(client.room_send_calls) == 1
     assert client.room_send_calls[0]["content"]["body"] == f"[attachment: {missing_path}]"
+
+
+@pytest.mark.asyncio
+async def test_send_passes_thread_relates_to_to_attachment_upload(monkeypatch) -> None:
+    channel = MatrixChannel(_make_config(), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    channel.client = client
+    channel._server_upload_limit_checked = True
+    channel._server_upload_limit_bytes = None
+
+    captured: dict[str, object] = {}
+
+    async def _fake_upload_and_send_attachment(
+        *,
+        room_id: str,
+        path: Path,
+        limit_bytes: int,
+        relates_to: dict[str, object] | None = None,
+    ) -> str | None:
+        captured["relates_to"] = relates_to
+        return None
+
+    monkeypatch.setattr(channel, "_upload_and_send_attachment", _fake_upload_and_send_attachment)
+
+    metadata = {
+        "thread_root_event_id": "$root1",
+        "thread_reply_to_event_id": "$reply1",
+    }
+    await channel.send(
+        OutboundMessage(
+            channel="matrix",
+            chat_id="!room:matrix.org",
+            content="Hi",
+            media=["/tmp/fake.txt"],
+            metadata=metadata,
+        )
+    )
+
+    assert captured["relates_to"] == {
+        "rel_type": "m.thread",
+        "event_id": "$root1",
+        "m.in_reply_to": {"event_id": "$reply1"},
+        "is_falling_back": True,
+    }
 
 
 @pytest.mark.asyncio

@@ -480,7 +480,21 @@ class MatrixChannel(BaseChannel):
             return 0
         return min(local_limit, server_limit)
 
-    async def _upload_and_send_attachment(self, room_id: str, path: Path, limit_bytes: int) -> str | None:
+    def _configured_media_limit_bytes(self) -> int:
+        """Resolve the configured local media limit with backward compatibility."""
+        for name in ("max_inbound_media_bytes", "max_media_bytes"):
+            value = getattr(self.config, name, None)
+            if isinstance(value, int):
+                return value
+        return 0
+
+    async def _upload_and_send_attachment(
+        self,
+        room_id: str,
+        path: Path,
+        limit_bytes: int,
+        relates_to: dict[str, Any] | None = None,
+    ) -> str | None:
         """Upload one local file to Matrix and send it as a media message."""
         if not self.client:
             return MATRIX_ATTACHMENT_UPLOAD_FAILED_TEMPLATE.format(path.name or MATRIX_DEFAULT_ATTACHMENT_NAME)
@@ -574,6 +588,8 @@ class MatrixChannel(BaseChannel):
             mxc_url=mxc_url,
             encryption_info=encryption_info,
         )
+        if relates_to:
+            content["m.relates_to"] = relates_to
         try:
             await self._send_room_content(room_id, content)
         except Exception as e:
@@ -592,6 +608,7 @@ class MatrixChannel(BaseChannel):
 
         text = msg.content or ""
         candidates = self._collect_outbound_media_candidates(msg.media)
+        relates_to = self._build_thread_relates_to(msg.metadata)
 
         try:
             failures: list[str] = []
@@ -603,6 +620,7 @@ class MatrixChannel(BaseChannel):
                         room_id=msg.chat_id,
                         path=path,
                         limit_bytes=limit_bytes,
+                        relates_to=relates_to,
                     )
                     if failure_marker:
                         failures.append(failure_marker)
@@ -614,7 +632,10 @@ class MatrixChannel(BaseChannel):
                     text = "\n".join(failures)
 
             if text or not candidates:
-                await self._send_room_content(msg.chat_id, _build_matrix_text_content(text))
+                content = _build_matrix_text_content(text)
+                if relates_to:
+                    content["m.relates_to"] = relates_to
+                await self._send_room_content(msg.chat_id, content)
         finally:
             await self._stop_typing_keepalive(msg.chat_id, clear_typing=True)
 
@@ -789,7 +810,7 @@ class MatrixChannel(BaseChannel):
         content = source.get("content")
         return content if isinstance(content, dict) else {}
 
-    def _event_thread_root_id(self, event: RoomMessage) -> str | None:
+    def _event_thread_root_id(self, event: Any) -> str | None:
         """Return thread root event_id if this message is inside a thread."""
         content = self._event_source_content(event)
         relates_to = content.get("m.relates_to")
@@ -800,7 +821,7 @@ class MatrixChannel(BaseChannel):
         root_id = relates_to.get("event_id")
         return root_id if isinstance(root_id, str) and root_id else None
 
-    def _thread_metadata(self, event: RoomMessage) -> dict[str, str] | None:
+    def _thread_metadata(self, event: Any) -> dict[str, str] | None:
         """Build metadata used to reply within a thread."""
         root_id = self._event_thread_root_id(event)
         if not root_id:
@@ -829,7 +850,7 @@ class MatrixChannel(BaseChannel):
             "is_falling_back": True,
         }
 
-    def _event_attachment_type(self, event: MatrixMediaEvent) -> str:
+    def _event_attachment_type(self, event: Any) -> str:
         """Map Matrix event payload/type to a stable attachment kind."""
         msgtype = self._event_source_content(event).get("msgtype")
         if msgtype == "m.image":
