@@ -2,7 +2,7 @@ import asyncio
 import logging
 import mimetypes
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 import nh3
 from loguru import logger
@@ -16,15 +16,10 @@ from nio import (
     JoinError,
     MatrixRoom,
     MemoryDownloadResponse,
-    RoomEncryptedAudio,
-    RoomEncryptedFile,
-    RoomEncryptedImage,
-    RoomEncryptedVideo,
-    RoomMessageAudio,
-    RoomMessageFile,
-    RoomMessageImage,
+    RoomEncryptedMedia,
+    RoomMessage,
+    RoomMessageMedia,
     RoomMessageText,
-    RoomMessageVideo,
     RoomSendError,
     RoomTypingError,
     SyncError,
@@ -54,16 +49,10 @@ MATRIX_ATTACHMENT_FAILED_TEMPLATE = "[attachment: {} - download failed]"
 MATRIX_ATTACHMENT_UPLOAD_FAILED_TEMPLATE = "[attachment: {} - upload failed]"
 MATRIX_DEFAULT_ATTACHMENT_NAME = "attachment"
 
-MATRIX_MEDIA_EVENT_TYPES = (
-    RoomMessageImage,
-    RoomMessageFile,
-    RoomMessageAudio,
-    RoomMessageVideo,
-    RoomEncryptedImage,
-    RoomEncryptedFile,
-    RoomEncryptedAudio,
-    RoomEncryptedVideo,
-)
+# Runtime callback filter for nio event dispatch (checked via isinstance).
+MATRIX_MEDIA_EVENT_FILTER = (RoomMessageMedia, RoomEncryptedMedia)
+# Static typing alias for media-specific handlers/helpers.
+MatrixMediaEvent: TypeAlias = RoomMessageMedia | RoomEncryptedMedia
 
 # Markdown renderer policy:
 # https://spec.matrix.org/v1.17/client-server-api/#mroommessage-msgtypes
@@ -653,7 +642,7 @@ class MatrixChannel(BaseChannel):
     def _register_event_callbacks(self) -> None:
         """Register Matrix event callbacks used by this channel."""
         self.client.add_event_callback(self._on_message, RoomMessageText)
-        self.client.add_event_callback(self._on_media_message, MATRIX_MEDIA_EVENT_TYPES)
+        self.client.add_event_callback(self._on_media_message, MATRIX_MEDIA_EVENT_FILTER)
         self.client.add_event_callback(self._on_room_invite, InviteEvent)
 
     def _register_response_callbacks(self) -> None:
@@ -768,7 +757,7 @@ class MatrixChannel(BaseChannel):
         member_count = getattr(room, "member_count", None)
         return isinstance(member_count, int) and member_count <= 2
 
-    def _is_bot_mentioned_from_mx_mentions(self, event: Any) -> bool:
+    def _is_bot_mentioned_from_mx_mentions(self, event: RoomMessage) -> bool:
         """Resolve mentions strictly from Matrix-native m.mentions payload."""
         source = getattr(event, "source", None)
         if not isinstance(source, dict):
@@ -788,7 +777,7 @@ class MatrixChannel(BaseChannel):
 
         return bool(self.config.allow_room_mentions and mentions.get("room") is True)
 
-    def _should_process_message(self, room: MatrixRoom, event: Any) -> bool:
+    def _should_process_message(self, room: MatrixRoom, event: RoomMessage) -> bool:
         """Apply sender and room policy checks before processing Matrix messages."""
         if not self.is_allowed(event.sender):
             return False
@@ -813,7 +802,7 @@ class MatrixChannel(BaseChannel):
         return media_dir
 
     @staticmethod
-    def _event_source_content(event: Any) -> dict[str, Any]:
+    def _event_source_content(event: RoomMessage) -> dict[str, Any]:
         """Extract Matrix event content payload when available."""
         source = getattr(event, "source", None)
         if not isinstance(source, dict):
@@ -821,7 +810,7 @@ class MatrixChannel(BaseChannel):
         content = source.get("content")
         return content if isinstance(content, dict) else {}
 
-    def _event_thread_root_id(self, event: Any) -> str | None:
+    def _event_thread_root_id(self, event: RoomMessage) -> str | None:
         """Return thread root event_id if this message is inside a thread."""
         content = self._event_source_content(event)
         relates_to = content.get("m.relates_to")
@@ -832,7 +821,7 @@ class MatrixChannel(BaseChannel):
         root_id = relates_to.get("event_id")
         return root_id if isinstance(root_id, str) and root_id else None
 
-    def _thread_metadata(self, event: Any) -> dict[str, str] | None:
+    def _thread_metadata(self, event: RoomMessage) -> dict[str, str] | None:
         """Build metadata used to reply within a thread."""
         root_id = self._event_thread_root_id(event)
         if not root_id:
@@ -861,7 +850,7 @@ class MatrixChannel(BaseChannel):
             "is_falling_back": True,
         }
 
-    def _event_attachment_type(self, event: Any) -> str:
+    def _event_attachment_type(self, event: MatrixMediaEvent) -> str:
         """Map Matrix event payload/type to a stable attachment kind."""
         msgtype = self._event_source_content(event).get("msgtype")
         if msgtype == "m.image":
@@ -883,7 +872,7 @@ class MatrixChannel(BaseChannel):
         return "file"
 
     @staticmethod
-    def _is_encrypted_media_event(event: Any) -> bool:
+    def _is_encrypted_media_event(event: MatrixMediaEvent) -> bool:
         """Return True for encrypted Matrix media events."""
         return (
             isinstance(getattr(event, "key", None), dict)
@@ -891,7 +880,7 @@ class MatrixChannel(BaseChannel):
             and isinstance(getattr(event, "iv", None), str)
         )
 
-    def _event_declared_size_bytes(self, event: Any) -> int | None:
+    def _event_declared_size_bytes(self, event: MatrixMediaEvent) -> int | None:
         """Return declared media size from Matrix event info, if present."""
         info = self._event_source_content(event).get("info")
         if not isinstance(info, dict):
@@ -901,7 +890,7 @@ class MatrixChannel(BaseChannel):
             return size
         return None
 
-    def _event_mime(self, event: Any) -> str | None:
+    def _event_mime(self, event: MatrixMediaEvent) -> str | None:
         """Best-effort MIME extraction from Matrix media event."""
         info = self._event_source_content(event).get("info")
         if isinstance(info, dict):
@@ -914,7 +903,7 @@ class MatrixChannel(BaseChannel):
             return mime
         return None
 
-    def _event_filename(self, event: Any, attachment_type: str) -> str:
+    def _event_filename(self, event: MatrixMediaEvent, attachment_type: str) -> str:
         """Build a safe filename for a Matrix attachment."""
         body = getattr(event, "body", None)
         if isinstance(body, str) and body.strip():
@@ -925,7 +914,7 @@ class MatrixChannel(BaseChannel):
 
     def _build_attachment_path(
         self,
-        event: Any,
+        event: MatrixMediaEvent,
         attachment_type: str,
         filename: str,
         mime: str | None,
@@ -985,7 +974,7 @@ class MatrixChannel(BaseChannel):
         )
         return None
 
-    def _decrypt_media_bytes(self, event: Any, ciphertext: bytes) -> bytes | None:
+    def _decrypt_media_bytes(self, event: MatrixMediaEvent, ciphertext: bytes) -> bytes | None:
         """Decrypt encrypted Matrix attachment bytes."""
         key_obj = getattr(event, "key", None)
         hashes = getattr(event, "hashes", None)
@@ -1014,7 +1003,7 @@ class MatrixChannel(BaseChannel):
     async def _fetch_media_attachment(
         self,
         room: MatrixRoom,
-        event: Any,
+        event: MatrixMediaEvent,
     ) -> tuple[dict[str, Any] | None, str]:
         """Download and prepare a Matrix attachment for inbound processing."""
         attachment_type = self._event_attachment_type(event)
@@ -1123,7 +1112,7 @@ class MatrixChannel(BaseChannel):
             await self._stop_typing_keepalive(room.room_id, clear_typing=True)
             raise
 
-    async def _on_media_message(self, room: MatrixRoom, event: Any) -> None:
+    async def _on_media_message(self, room: MatrixRoom, event: MatrixMediaEvent) -> None:
         """Handle inbound Matrix media events and forward local attachment paths."""
         if event.sender == self.config.user_id:
             return
