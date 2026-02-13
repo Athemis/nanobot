@@ -43,6 +43,7 @@ class _FakeAsyncClient:
         self.load_store_called = False
         self.stop_sync_forever_called = False
         self.join_calls: list[str] = []
+        self.sync_calls: list[dict[str, object]] = []
         self.callbacks: list[tuple[object, object]] = []
         self.response_callbacks: list[tuple[object, object]] = []
         self.rooms: dict[str, object] = {}
@@ -74,6 +75,13 @@ class _FakeAsyncClient:
 
     async def join(self, room_id: str) -> None:
         self.join_calls.append(room_id)
+
+    async def sync(
+        self,
+        timeout: int = 0,
+        full_state: bool | None = None,
+    ) -> None:
+        self.sync_calls.append({"timeout": timeout, "full_state": full_state})
 
     async def room_send(
         self,
@@ -889,6 +897,7 @@ async def test_send_retries_after_join_when_room_missing(monkeypatch) -> None:
 
     assert calls["count"] == 2
     assert client.join_calls == [room_id]
+    assert client.sync_calls == [{"timeout": 0, "full_state": True}]
     assert len(client.room_send_calls) == 1
     assert client.room_send_calls[0]["content"]["body"] == "Hi"
 
