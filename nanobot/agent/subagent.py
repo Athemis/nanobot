@@ -48,9 +48,10 @@ class SubagentManager:
         self.workspace = workspace
         self.bus = bus
         self.model = model or provider.get_default_model()
-        self.web_search_config = web_search_config or WebSearchConfig(api_key=brave_api_key or "")
-        if brave_api_key is not None:
-            self.web_search_config.api_key = brave_api_key
+        self.web_search_config = WebSearchConfig.from_legacy(
+            config=web_search_config,
+            brave_api_key=brave_api_key,
+        )
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self._running_tasks: dict[str, asyncio.Task[None]] = {}

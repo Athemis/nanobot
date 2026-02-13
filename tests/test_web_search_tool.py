@@ -1,107 +1,124 @@
 import httpx
 import pytest
+from collections.abc import Callable
+from typing import Literal
 
 from nanobot.agent.tools.web import WebSearchTool
-from nanobot.config.schema import WebSearchConfig
+from nanobot.config.schema import SearxngConfig, TavilyConfig, WebSearchConfig
+
+
+def _tool(config: WebSearchConfig, handler) -> WebSearchTool:
+    return WebSearchTool(config=config, transport=httpx.MockTransport(handler))
+
+
+def _assert_tavily_request(request: httpx.Request) -> bool:
+    payload = request.read().decode("utf-8")
+    return (
+        request.method == "POST"
+        and str(request.url) == "https://api.tavily.com/search"
+        and '"api_key":"tavily-key"' in payload
+        and '"query":"openclaw"' in payload
+        and '"max_results":2' in payload
+    )
 
 
 @pytest.mark.asyncio
-async def test_web_search_brave_provider_formats_results() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "GET"
-        assert (
-            str(request.url) == "https://api.search.brave.com/res/v1/web/search?q=nanobot&count=1"
-        )
-        assert request.headers["X-Subscription-Token"] == "brave-key"
-        return httpx.Response(
-            200,
-            json={
-                "web": {
+@pytest.mark.parametrize(
+    ("provider", "config_kwargs", "query", "count", "assert_request", "response", "assert_text"),
+    [
+        (
+            "brave",
+            {"api_key": "brave-key"},
+            "nanobot",
+            1,
+            lambda request: (
+                request.method == "GET"
+                and str(request.url)
+                == "https://api.search.brave.com/res/v1/web/search?q=nanobot&count=1"
+                and request.headers["X-Subscription-Token"] == "brave-key"
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "web": {
+                        "results": [
+                            {
+                                "title": "NanoBot",
+                                "url": "https://example.com/nanobot",
+                                "description": "Ultra-lightweight assistant",
+                            }
+                        ]
+                    }
+                },
+            ),
+            ["Results for: nanobot", "1. NanoBot", "https://example.com/nanobot"],
+        ),
+        (
+            "tavily",
+            {"tavily": TavilyConfig(api_key="tavily-key")},
+            "openclaw",
+            2,
+            _assert_tavily_request,
+            httpx.Response(
+                200,
+                json={
                     "results": [
                         {
-                            "title": "NanoBot",
-                            "url": "https://example.com/nanobot",
-                            "description": "Ultra-lightweight assistant",
+                            "title": "OpenClaw",
+                            "url": "https://example.com/openclaw",
+                            "content": "Plugin-based assistant framework",
                         }
                     ]
-                }
-            },
-        )
-
-    tool = WebSearchTool(
-        config=WebSearchConfig(provider="brave", api_key="brave-key", max_results=5),
-        transport=httpx.MockTransport(handler),
-    )
-
-    result = await tool.execute(query="nanobot", count=1)
-    assert "Results for: nanobot" in result
-    assert "1. NanoBot" in result
-    assert "https://example.com/nanobot" in result
-
-
-@pytest.mark.asyncio
-async def test_web_search_tavily_provider_formats_results() -> None:
+                },
+            ),
+            ["Results for: openclaw", "1. OpenClaw", "https://example.com/openclaw"],
+        ),
+        (
+            "searxng",
+            {"searxng": SearxngConfig(base_url="https://searx.example")},
+            "nanobot",
+            1,
+            lambda request: (
+                request.method == "GET"
+                and str(request.url) == "https://searx.example/search?q=nanobot&format=json"
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "title": "nanobot docs",
+                            "url": "https://example.com/nanobot",
+                            "content": "Lightweight assistant docs",
+                        }
+                    ]
+                },
+            ),
+            ["Results for: nanobot", "1. nanobot docs", "https://example.com/nanobot"],
+        ),
+    ],
+)
+async def test_web_search_provider_formats_results(
+    provider: Literal["brave", "tavily", "searxng"],
+    config_kwargs: dict,
+    query: str,
+    count: int,
+    assert_request: Callable[[httpx.Request], bool],
+    response: httpx.Response,
+    assert_text: list[str],
+) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "POST"
-        assert str(request.url) == "https://api.tavily.com/search"
-        payload = request.read().decode("utf-8")
-        assert '"api_key":"tavily-key"' in payload
-        assert '"query":"openclaw"' in payload
-        assert '"max_results":2' in payload
-        return httpx.Response(
-            200,
-            json={
-                "results": [
-                    {
-                        "title": "OpenClaw",
-                        "url": "https://example.com/openclaw",
-                        "content": "Plugin-based assistant framework",
-                    }
-                ]
-            },
-        )
+        assert assert_request(request)
+        return response
 
-    tool = WebSearchTool(
-        config=WebSearchConfig(provider="tavily", tavily_api_key="tavily-key", max_results=5),
-        transport=httpx.MockTransport(handler),
-    )
-
-    result = await tool.execute(query="openclaw", count=2)
-    assert "Results for: openclaw" in result
-    assert "1. OpenClaw" in result
-    assert "https://example.com/openclaw" in result
+    tool = _tool(WebSearchConfig(provider=provider, max_results=5, **config_kwargs), handler)
+    result = await tool.execute(query=query, count=count)
+    for text in assert_text:
+        assert text in result
 
 
 @pytest.mark.asyncio
-async def test_web_search_duckduckgo_provider_parses_html() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "GET"
-        assert request.url.host == "html.duckduckgo.com"
-        html = """
-        <html><body>
-          <a class=\"result__a\" href=\"https://example.com/a\">First Result</a>
-          <a class=\"result__snippet\">Snippet A</a>
-          <a class=\"result__a\" href=\"https://example.com/b\">Second Result</a>
-          <a class=\"result__snippet\">Snippet B</a>
-        </body></html>
-        """
-        return httpx.Response(200, text=html)
-
-    tool = WebSearchTool(
-        config=WebSearchConfig(provider="duckduckgo", max_results=5),
-        transport=httpx.MockTransport(handler),
-    )
-
-    result = await tool.execute(query="assistant", count=2)
-    assert "Results for: assistant" in result
-    assert "1. First Result" in result
-    assert "https://example.com/a" in result
-    assert "2. Second Result" in result
-    assert "https://example.com/b" in result
-
-
-@pytest.mark.asyncio
-async def test_web_search_legacy_constructor_still_works() -> None:
+async def test_web_search_constructor_overrides_still_work() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -115,62 +132,62 @@ async def test_web_search_legacy_constructor_still_works() -> None:
         )
 
     tool = WebSearchTool(
-        api_key="legacy-key", max_results=3, transport=httpx.MockTransport(handler)
+        api_key="constructor-key", max_results=3, transport=httpx.MockTransport(handler)
     )
-    result = await tool.execute(query="legacy", count=1)
+    result = await tool.execute(query="constructor", count=1)
     assert "1. Legacy" in result
 
 
 @pytest.mark.asyncio
-async def test_web_search_brave_falls_back_to_duckduckgo_when_key_missing(
+@pytest.mark.parametrize(
+    ("provider", "config", "missing_env", "expected_title"),
+    [
+        (
+            "brave",
+            WebSearchConfig(provider="brave", api_key="", max_results=5),
+            "BRAVE_API_KEY",
+            "Fallback Result",
+        ),
+        (
+            "tavily",
+            WebSearchConfig(provider="tavily", tavily=TavilyConfig(api_key=""), max_results=5),
+            "TAVILY_API_KEY",
+            "Tavily Fallback",
+        ),
+    ],
+)
+async def test_web_search_missing_key_falls_back_to_duckduckgo(
     monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    config: WebSearchConfig,
+    missing_env: str,
+    expected_title: str,
 ) -> None:
-    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+    monkeypatch.delenv(missing_env, raising=False)
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "html.duckduckgo.com"
-        html = """
-        <html><body>
-          <a class=\"result__a\" href=\"https://example.com/fallback\">Fallback Result</a>
-          <a class=\"result__snippet\">Fallback snippet</a>
-        </body></html>
-        """
-        return httpx.Response(200, text=html)
+    called = False
 
-    tool = WebSearchTool(
-        config=WebSearchConfig(provider="brave", api_key="", max_results=5),
-        transport=httpx.MockTransport(handler),
-    )
+    class FakeDDGS:
+        def __init__(self, *args, **kwargs):
+            pass
 
-    result = await tool.execute(query="fallback", count=1)
+        def text(self, keywords: str, max_results: int):
+            nonlocal called
+            called = True
+            return [
+                {
+                    "title": expected_title,
+                    "href": f"https://example.com/{provider}-fallback",
+                    "body": "Fallback snippet",
+                }
+            ]
+
+    monkeypatch.setattr("nanobot.agent.tools.web.DDGS", FakeDDGS, raising=False)
+
+    result = await WebSearchTool(config=config).execute(query="fallback", count=1)
+    assert called
     assert "Using DuckDuckGo fallback" in result
-    assert "1. Fallback Result" in result
-
-
-@pytest.mark.asyncio
-async def test_web_search_tavily_falls_back_to_duckduckgo_when_key_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "html.duckduckgo.com"
-        html = """
-        <html><body>
-          <a class=\"result__a\" href=\"https://example.com/tavily-fallback\">Tavily Fallback</a>
-          <a class=\"result__snippet\">Fallback snippet</a>
-        </body></html>
-        """
-        return httpx.Response(200, text=html)
-
-    tool = WebSearchTool(
-        config=WebSearchConfig(provider="tavily", tavily_api_key="", max_results=5),
-        transport=httpx.MockTransport(handler),
-    )
-
-    result = await tool.execute(query="fallback", count=1)
-    assert "Using DuckDuckGo fallback" in result
-    assert "1. Tavily Fallback" in result
+    assert f"1. {expected_title}" in result
 
 
 @pytest.mark.asyncio
@@ -178,12 +195,11 @@ async def test_web_search_brave_missing_key_without_fallback_returns_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("BRAVE_API_KEY", raising=False)
-
     tool = WebSearchTool(
         config=WebSearchConfig(
             provider="brave",
             api_key="",
-            fallback_to_duckduckgo_on_missing_key=False,
+            fallback_to_duckduckgo=False,
         )
     )
 
@@ -192,42 +208,11 @@ async def test_web_search_brave_missing_key_without_fallback_returns_error(
 
 
 @pytest.mark.asyncio
-async def test_web_search_searxng_provider_formats_results() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "GET"
-        assert str(request.url) == "https://searx.example/search?q=nanobot&format=json"
-        return httpx.Response(
-            200,
-            json={
-                "results": [
-                    {
-                        "title": "nanobot docs",
-                        "url": "https://example.com/nanobot",
-                        "content": "Lightweight assistant docs",
-                    }
-                ]
-            },
-        )
-
-    tool = WebSearchTool(
-        config=WebSearchConfig(
-            provider="searxng",
-            searxng_base_url="https://searx.example",
-            max_results=5,
-        ),
-        transport=httpx.MockTransport(handler),
-    )
-
-    result = await tool.execute(query="nanobot", count=1)
-    assert "Results for: nanobot" in result
-    assert "1. nanobot docs" in result
-    assert "https://example.com/nanobot" in result
-
-
-@pytest.mark.asyncio
 async def test_web_search_searxng_missing_base_url_returns_error() -> None:
     tool = WebSearchTool(
-        config=WebSearchConfig(provider="searxng", searxng_base_url="", max_results=5)
+        config=WebSearchConfig(
+            provider="searxng", searxng=SearxngConfig(base_url=""), max_results=5
+        )
     )
 
     result = await tool.execute(query="nanobot", count=1)
@@ -256,10 +241,68 @@ async def test_web_search_searxng_uses_env_base_url(
             },
         )
 
+    result = await _tool(
+        WebSearchConfig(provider="searxng", searxng=SearxngConfig(base_url=""), max_results=5),
+        handler,
+    ).execute(query="nanobot", count=1)
+    assert "1. env result" in result
+
+
+@pytest.mark.asyncio
+async def test_web_search_register_custom_provider() -> None:
+    config = WebSearchConfig(provider="brave", max_results=5).model_copy(
+        update={"provider": "custom"}
+    )
+    tool = WebSearchTool(config=config)
+
+    async def _custom_provider(query: str, n: int) -> str:
+        return f"custom:{query}:{n}"
+
+    tool.register_provider("custom", _custom_provider)
+
+    result = await tool.execute(query="nanobot", count=2)
+    assert result == "custom:nanobot:2"
+
+
+def test_web_search_from_legacy_does_not_mutate_input_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("SEARXNG_BASE_URL", raising=False)
+
+    original = WebSearchConfig(api_key="", max_results=5)
+    derived = WebSearchConfig.from_legacy(
+        config=original,
+        brave_api_key="legacy-key",
+        max_results=2,
+    )
+
+    assert original is not derived
+    assert original.api_key == ""
+    assert original.max_results == 5
+    assert derived.api_key == "legacy-key"
+    assert derived.max_results == 2
+
+
+@pytest.mark.asyncio
+async def test_web_search_duckduckgo_uses_injected_ddgs_factory() -> None:
+    class FakeDDGS:
+        def text(self, keywords: str, max_results: int):
+            assert keywords == "nanobot"
+            assert max_results == 1
+            return [
+                {
+                    "title": "NanoBot result",
+                    "href": "https://example.com/nanobot",
+                    "body": "Search content",
+                }
+            ]
+
     tool = WebSearchTool(
-        config=WebSearchConfig(provider="searxng", searxng_base_url="", max_results=5),
-        transport=httpx.MockTransport(handler),
+        config=WebSearchConfig(provider="duckduckgo", max_results=5),
+        ddgs_factory=lambda: FakeDDGS(),
     )
 
     result = await tool.execute(query="nanobot", count=1)
-    assert "1. env result" in result
+    assert "1. NanoBot result" in result

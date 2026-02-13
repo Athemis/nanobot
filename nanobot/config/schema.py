@@ -1,5 +1,6 @@
 """Configuration schema using Pydantic."""
 
+import os
 from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, Field, ConfigDict
@@ -261,15 +262,50 @@ class GatewayConfig(BaseModel):
     port: int = 18790
 
 
+class TavilyConfig(BaseModel):
+    """Tavily search provider configuration."""
+    api_key: str = ""
+
+
+class SearxngConfig(BaseModel):
+    """SearXNG search provider configuration."""
+    base_url: str = ""
+
+
 class WebSearchConfig(BaseModel):
     """Web search tool configuration."""
-
     provider: Literal["brave", "duckduckgo", "tavily", "searxng"] = "brave"
     api_key: str = ""  # Brave Search API key
-    tavily_api_key: str = ""  # Tavily API key
-    searxng_base_url: str = ""  # SearXNG base URL, e.g. https://searx.example
-    fallback_to_duckduckgo_on_missing_key: bool = True
+    fallback_to_duckduckgo: bool = True
+    tavily: TavilyConfig = Field(default_factory=TavilyConfig)
+    searxng: SearxngConfig = Field(default_factory=SearxngConfig)
     max_results: int = 5
+
+    def resolve_env(self) -> "WebSearchConfig":
+        """Resolve provider credentials from environment once."""
+        if not self.api_key:
+            self.api_key = os.environ.get("BRAVE_API_KEY", "")
+        if not self.tavily.api_key:
+            self.tavily.api_key = os.environ.get("TAVILY_API_KEY", "")
+        if not self.searxng.base_url:
+            self.searxng.base_url = os.environ.get("SEARXNG_BASE_URL", "")
+        return self
+
+    @classmethod
+    def from_legacy(
+        cls,
+        config: "WebSearchConfig | None" = None,
+        brave_api_key: str | None = None,
+        max_results: int | None = None,
+    ) -> "WebSearchConfig":
+        """Build search config from constructor overrides and env defaults."""
+        cfg = config.model_copy(deep=True) if config is not None else cls()
+        if brave_api_key is not None:
+            cfg.api_key = brave_api_key
+        if max_results is not None:
+            cfg.max_results = max_results
+        cfg.resolve_env()
+        return cfg
 
 
 class WebToolsConfig(BaseModel):
