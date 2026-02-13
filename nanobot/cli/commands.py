@@ -795,86 +795,14 @@ def cron_run(
     force: bool = typer.Option(False, "--force", "-f", help="Run even if disabled"),
 ):
     """Manually run a job."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.bus.queue import MessageBus
-    from nanobot.channels.base import BaseChannel
-    from nanobot.channels.manager import ChannelManager
-    from nanobot.config.loader import get_data_dir, load_config
+    from nanobot.config.loader import get_data_dir
     from nanobot.cron.service import CronService
-    from nanobot.cron.types import CronJob
-    from nanobot.session.manager import SessionManager
 
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
-    jobs = service.list_jobs(include_disabled=True)
-    target_job = next((job for job in jobs if job.id == job_id), None)
-    if not target_job:
-        console.print(f"[red]Job {job_id} not found[/red]")
-        raise typer.Exit(1)
-
-    config = load_config()
-    bus = MessageBus()
-    provider = _make_provider(config)
-    session_manager = SessionManager(config.workspace_path)
-
-    delivery_channel_name = target_job.payload.channel or "cli"
-    delivery_channel: BaseChannel | None = None
-    if target_job.payload.deliver and delivery_channel_name != "cli":
-        channel_manager = ChannelManager(config, bus)
-        delivery_channel = channel_manager.get_channel(delivery_channel_name)
-        if not delivery_channel:
-            console.print(
-                f"[red]Delivery channel '{delivery_channel_name}' is not enabled in config[/red]"
-            )
-            raise typer.Exit(1)
-
-    agent = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=config.workspace_path,
-        model=config.agents.defaults.model,
-        max_iterations=config.agents.defaults.max_tool_iterations,
-        web_search_config=config.tools.web.search,
-        memory_window=config.agents.defaults.memory_window,
-        exec_config=config.tools.exec,
-        cron_service=service,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
-        session_manager=session_manager,
-    )
-
-    async def on_cron_job(job: CronJob) -> str | None:
-        response = await agent.process_direct(
-            job.payload.message,
-            session_key=f"cron:{job.id}",
-            channel=job.payload.channel or "cli",
-            chat_id=job.payload.to or "direct",
-        )
-
-        if job.payload.deliver and job.payload.to:
-            outbound = OutboundMessage(
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to,
-                content=response or "",
-            )
-            if delivery_channel and outbound.channel == delivery_channel_name:
-                await delivery_channel.send(outbound)
-            elif outbound.channel == "cli":
-                _print_agent_response(outbound.content, render_markdown=True)
-            else:
-                await bus.publish_outbound(outbound)
-        return response
-
-    service.on_job = on_cron_job
 
     async def run():
-        if delivery_channel:
-            await delivery_channel.start()
-        try:
-            return await service.run_job(job_id, force=force)
-        finally:
-            if delivery_channel:
-                await delivery_channel.stop()
+        return await service.run_job(job_id, force=force)
 
     if asyncio.run(run()):
         console.print(f"[green]✓[/green] Job executed")
