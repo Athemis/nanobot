@@ -14,15 +14,16 @@ Always use Context7 MCP when I need library/API documentation, code generation, 
 
 Context7 Library IDs for this project (use to skip library-matching):
 
-| Library    | Context7 ID              |
-| ---------- | ------------------------ |
-| LiteLLM    | `/berriai/litellm`       |
-| Pydantic   | `/pydantic/pydantic`     |
-| Typer      | `/fastapi/typer`         |
-| Pytest     | `/pytest-dev/pytest`     |
-| Ruff       | `/astral-sh/ruff`        |
-| TypeScript | `/microsoft/typescript`  |
-| Matrix Nio | `/matrix-nio/matrix-nio` |
+| Library              | Context7 ID              |
+| -------------------- | ------------------------ |
+| LiteLLM              | `/berriai/litellm`       |
+| Pydantic             | `/pydantic/pydantic`     |
+| Typer                | `/fastapi/typer`         |
+| Pytest               | `/pytest-dev/pytest`     |
+| Ruff                 | `/astral-sh/ruff`        |
+| TypeScript           | `/microsoft/typescript`  |
+| Matrix Nio           | `/matrix-nio/matrix-nio` |
+| Matrix Specification | `/websites/spec_matrix`  |
 
 ## Project Structure & Module Organization
 
