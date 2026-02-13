@@ -219,9 +219,9 @@ class CronService:
         logger.info(f"Cron: executing job '{job.name}' ({job.id})")
         
         try:
-            response = None
-            if self.on_job:
-                response = await self.on_job(job)
+            if not self.on_job:
+                raise RuntimeError("Cron job handler is not configured")
+            await self.on_job(job)
             
             job.state.last_status = "ok"
             job.state.last_error = None
@@ -333,7 +333,7 @@ class CronService:
                 await self._execute_job(job)
                 self._save_store()
                 self._arm_timer()
-                return True
+                return job.state.last_status == "ok"
         return False
     
     def status(self) -> dict:
