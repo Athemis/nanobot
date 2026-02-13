@@ -127,6 +127,7 @@ For OpenRouter - recommended for global users:
 **Optional: Web search provider** (default is `brave`)
 
 Config keys:
+
 - `tools.web.search.provider`: `brave` (default), `duckduckgo`, `tavily`, or `searxng`
 - `tools.web.search.apiKey` (or `BRAVE_API_KEY`)
 - `tools.web.search.tavily.apiKey` (or `TAVILY_API_KEY`)
@@ -733,10 +734,10 @@ nanobot gateway
 
 🐈 nanobot is capable of linking to the agent social network (agent community). **Just send one message and your nanobot joins automatically!**
 
-| Platform | How to Join (send this message to your bot) |
-|----------|-------------|
-| [**Moltbook**](https://www.moltbook.com/) | `Read https://moltbook.com/skill.md and follow the instructions to join Moltbook` |
-| [**ClawdChat**](https://clawdchat.ai/) | `Read https://clawdchat.ai/skill.md and follow the instructions to join ClawdChat` |
+| Platform                                  | How to Join (send this message to your bot)                                        |
+| ----------------------------------------- | ---------------------------------------------------------------------------------- |
+| [**Moltbook**](https://www.moltbook.com/) | `Read https://moltbook.com/skill.md and follow the instructions to join Moltbook`  |
+| [**ClawdChat**](https://clawdchat.ai/)    | `Read https://clawdchat.ai/skill.md and follow the instructions to join ClawdChat` |
 
 Simply send the command above to your nanobot (via CLI or any chat channel), and it will handle the rest.
 
@@ -822,17 +823,18 @@ That's it! Environment variables, model prefixing, config matching, and `nanobot
 
 ## CLI Reference
 
-| Command                       | Description                   |
-| ----------------------------- | ----------------------------- |
-| `nanobot onboard`             | Initialize config & workspace |
-| `nanobot agent -m "..."`      | Chat with the agent           |
-| `nanobot agent`               | Interactive chat mode         |
-| `nanobot agent --no-markdown` | Show plain-text replies       |
-| `nanobot agent --logs`        | Show runtime logs during chat |
-| `nanobot gateway`             | Start the gateway             |
-| `nanobot status`              | Show status                   |
-| `nanobot channels login`      | Link WhatsApp (scan QR)       |
-| `nanobot channels status`     | Show channel status           |
+| Command                               | Description                   |
+| ------------------------------------- | ----------------------------- |
+| `nanobot onboard`                     | Initialize config & workspace |
+| `nanobot agent -m "..."`              | Chat with the agent           |
+| `nanobot agent`                       | Interactive chat mode         |
+| `nanobot agent --no-markdown`         | Show plain-text replies       |
+| `nanobot agent --logs`                | Show runtime logs during chat |
+| `nanobot gateway`                     | Start the gateway             |
+| `nanobot status`                      | Show status                   |
+| `nanobot provider login openai-codex` | OAuth login for providers     |
+| `nanobot channels login`              | Link WhatsApp (scan QR)       |
+| `nanobot channels status`             | Show channel status           |
 
 Interactive mode exits: `exit`, `quit`, `/exit`, `/quit`, `:q`, or `Ctrl+D`.
 

@@ -19,6 +19,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from nanobot import __version__, __logo__
+from nanobot.config.schema import Config
 
 app = typer.Typer(
     name="nanobot",
@@ -274,22 +275,30 @@ This file stores important information that should persist across sessions.
     skills_dir.mkdir(exist_ok=True)
 
 
-def _make_provider(config):
-    """Create provider from config. Exits if no usable provider config found."""
+def _make_provider(config: Config):
+    """Create LiteLLMProvider from config. Exits if no API key found."""
     from nanobot.providers.litellm_provider import LiteLLMProvider
     from nanobot.providers.openai_codex_provider import OpenAICodexProvider
-    p = config.get_provider()
-    provider_name = config.get_provider_name()
+
     model = config.agents.defaults.model
-    if provider_name == "openai_codex":
-        return OpenAICodexProvider(default_model=model)
-    if not (p and p.api_key) and not model.startswith("bedrock/"):
+    provider_name = config.get_provider_name(model)
+    p = config.get_provider(model)
+
+    # OpenAI Codex (OAuth): don't route via LiteLLM; use the dedicated implementation.
+    if provider_name == "openai_codex" or model.startswith("openai-codex/"):
+        return OpenAICodexProvider(
+            default_model=model,
+            api_base=p.api_base if p else None,
+        )
+
+    if not model.startswith("bedrock/") and not (p and p.api_key):
         console.print("[red]Error: No API key configured.[/red]")
         console.print("Set one in ~/.nanobot/config.json under providers section")
         raise typer.Exit(1)
+
     return LiteLLMProvider(
         api_key=p.api_key if p else None,
-        api_base=config.get_api_base(),
+        api_base=config.get_api_base(model),
         default_model=model,
         extra_headers=p.extra_headers if p else None,
         provider_name=provider_name,
@@ -860,9 +869,12 @@ def status():
 # OAuth Login
 # ============================================================================
 
+provider_app = typer.Typer(help="Manage providers")
+app.add_typer(provider_app, name="provider")
 
-@app.command()
-def login(
+
+@provider_app.command("login")
+def provider_login(
     provider: str = typer.Argument(..., help="OAuth provider to authenticate with (e.g., 'openai-codex')"),
 ):
     """Authenticate with an OAuth provider."""
@@ -870,19 +882,24 @@ def login(
 
     if provider == "openai-codex":
         try:
-            from oauth_cli_kit import get_token as get_codex_token
-
-            console.print("[cyan]Starting OpenAI Codex authentication...[/cyan]")
-            console.print("A browser window will open for you to authenticate.\n")
-
-            token = get_codex_token()
-
-            if token and token.access:
-                console.print(f"[green]✓ Successfully authenticated with OpenAI Codex![/green]")
-                console.print(f"[dim]Account ID: {token.account_id}[/dim]")
-            else:
+            from oauth_cli_kit import get_token, login_oauth_interactive
+            token = None
+            try:
+                token = get_token()
+            except Exception:
+                token = None
+            if not (token and token.access):
+                console.print("[cyan]No valid token found. Starting interactive OAuth login...[/cyan]")
+                console.print("A browser window may open for you to authenticate.\n")
+                token = login_oauth_interactive(
+                    print_fn=lambda s: console.print(s),
+                    prompt_fn=lambda s: typer.prompt(s),
+                )
+            if not (token and token.access):
                 console.print("[red]✗ Authentication failed[/red]")
                 raise typer.Exit(1)
+            console.print("[green]✓ Successfully authenticated with OpenAI Codex![/green]")
+            console.print(f"[dim]Account ID: {token.account_id}[/dim]")
         except ImportError:
             console.print("[red]oauth_cli_kit not installed. Run: pip install oauth-cli-kit[/red]")
             raise typer.Exit(1)
