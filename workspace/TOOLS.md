@@ -28,6 +28,14 @@ Edit a file by replacing specific text.
 edit_file(path: str, old_text: str, new_text: str) -> str
 ```
 
+### delete_file
+
+Delete a file or symbolic link.
+
+```
+edit_file(path: str) -> str
+```
+
 ### list_dir
 
 List contents of a directory.
