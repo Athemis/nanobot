@@ -855,6 +855,45 @@ async def test_send_clears_typing_after_send() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_retries_after_join_when_room_missing(monkeypatch) -> None:
+    channel = MatrixChannel(_make_config(), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    channel.client = client
+
+    room_id = "!room:matrix.org"
+    calls = {"count": 0}
+
+    async def _room_send(
+        room_id: str,
+        message_type: str,
+        content: dict[str, object],
+        ignore_unverified_devices: object = _ROOM_SEND_UNSET,
+    ) -> None:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise matrix_module.LocalProtocolError(f"No such room with id {room_id} found.")
+        call: dict[str, object] = {
+            "room_id": room_id,
+            "message_type": message_type,
+            "content": content,
+        }
+        if ignore_unverified_devices is not _ROOM_SEND_UNSET:
+            call["ignore_unverified_devices"] = ignore_unverified_devices
+        client.room_send_calls.append(call)
+
+    monkeypatch.setattr(client, "room_send", _room_send)
+
+    await channel.send(
+        OutboundMessage(channel="matrix", chat_id=room_id, content="Hi")
+    )
+
+    assert calls["count"] == 2
+    assert client.join_calls == [room_id]
+    assert len(client.room_send_calls) == 1
+    assert client.room_send_calls[0]["content"]["body"] == "Hi"
+
+
+@pytest.mark.asyncio
 async def test_send_uploads_media_and_sends_file_event(tmp_path) -> None:
     channel = MatrixChannel(_make_config(), MessageBus())
     client = _FakeAsyncClient("", "", "", None)
