@@ -441,18 +441,13 @@ class MatrixChannel(BaseChannel):
                 "Matrix room {} missing from local state; attempting join and retry",
                 room_id,
             )
-            join_response = await self.client.join(room_id)
-            if isinstance(join_response, JoinError):
-                raise LocalProtocolError(
-                    f"Failed to join room {room_id}: {join_response}"
-                ) from e
+            await self.client.join(room_id)
 
             sync_once = getattr(self.client, "sync", None)
             if callable(sync_once):
                 try:
                     try:
-                        # Force full-state sync to repopulate room cache before retrying send.
-                        maybe_response = sync_once(timeout=0, full_state=True)
+                        maybe_response = sync_once(timeout=0, full_state=False)
                     except TypeError:
                         # Compatibility fallback for sync signatures without full_state.
                         maybe_response = sync_once(timeout=0)
