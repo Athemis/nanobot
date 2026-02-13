@@ -1,12 +1,10 @@
 import asyncio
-import inspect
 import logging
 import mimetypes
 from pathlib import Path
 from typing import Any, TypeAlias
 
 import nh3
-from aiohttp import ClientConnectionError
 from loguru import logger
 from mistune import create_markdown
 from nio import (
@@ -28,7 +26,7 @@ from nio import (
     UploadError,
 )
 from nio.crypto.attachments import decrypt_attachment
-from nio.exceptions import EncryptionError, LocalProtocolError
+from nio.exceptions import EncryptionError
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.channels.base import BaseChannel
@@ -430,39 +428,7 @@ class MatrixChannel(BaseChannel):
             # TODO(matrix): Add explicit config for strict verified-device sending mode.
             room_send_kwargs["ignore_unverified_devices"] = True
 
-        try:
-            await self.client.room_send(**room_send_kwargs)
-        except LocalProtocolError as e:
-            if f"No such room with id {room_id}" not in str(e):
-                raise
-
-            # Manual startup paths can race with first sync; room may not be in local cache yet.
-            logger.warning(
-                "Matrix room {} missing from local state; attempting join and retry",
-                room_id,
-            )
-            await self.client.join(room_id)
-
-            sync_once = getattr(self.client, "sync", None)
-            if callable(sync_once):
-                try:
-                    try:
-                        maybe_response = sync_once(timeout=0, full_state=False)
-                    except TypeError:
-                        # Compatibility fallback for sync signatures without full_state.
-                        maybe_response = sync_once(timeout=0)
-                    # Some test doubles may expose non-awaitable sync methods.
-                    if inspect.isawaitable(maybe_response):
-                        await maybe_response
-                except (LocalProtocolError, ClientConnectionError, asyncio.TimeoutError) as sync_error:
-                    logger.debug(
-                        "Matrix post-join sync failed for room {} ({}): {}",
-                        room_id,
-                        type(sync_error).__name__,
-                        str(sync_error),
-                    )
-
-            await self.client.room_send(**room_send_kwargs)
+        await self.client.room_send(**room_send_kwargs)
 
     async def _resolve_server_upload_limit_bytes(self) -> int | None:
         """Resolve homeserver-advertised upload limit once per channel lifecycle."""
