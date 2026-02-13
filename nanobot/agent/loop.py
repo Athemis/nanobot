@@ -49,6 +49,8 @@ class AgentLoop:
         model: str | None = None,
         max_iterations: int = 20,
         memory_window: int = 50,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
         brave_api_key: str | None = None,
         web_search_config: "WebSearchConfig | None" = None,
         exec_config: "ExecToolConfig | None" = None,
@@ -65,6 +67,8 @@ class AgentLoop:
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
         self.memory_window = memory_window
+        self.max_tokens = max_tokens
+        self.temperature = temperature
         self.brave_api_key = brave_api_key
         self.web_search_config = WebSearchConfig.from_legacy(
             config=web_search_config,
@@ -82,6 +86,8 @@ class AgentLoop:
             workspace=workspace,
             bus=bus,
             model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
             brave_api_key=brave_api_key,
             web_search_config=self.web_search_config,
             exec_config=self.exec_config,
@@ -232,7 +238,11 @@ class AgentLoop:
 
             # Call LLM
             response = await self.provider.chat(
-                messages=messages, tools=self.tools.get_definitions(), model=self.model
+                messages=messages,
+                tools=self.tools.get_definitions(),
+                model=self.model,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
             )
 
             # Handle tool calls
@@ -351,7 +361,11 @@ class AgentLoop:
             iteration += 1
 
             response = await self.provider.chat(
-                messages=messages, tools=self.tools.get_definitions(), model=self.model
+                messages=messages,
+                tools=self.tools.get_definitions(),
+                model=self.model,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
             )
 
             if response.has_tool_calls:
