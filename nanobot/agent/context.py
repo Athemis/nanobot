@@ -65,8 +65,8 @@ class ContextBuilder:
 
 The following skills extend your capabilities. Before replying: scan the <description> entries.
 Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
-- Skills are playbooks NOT scripts. NEVER try to run directly them via cli e.g. as a `nanobot` command.
-- If exactly one skill clearly applies: read its SKILL.md at <location> with the read_file tool, then follow it.
+- Skills are playbooks NOT scripts. Do not try to run a skill as a guessed nanobot CLI subcommand (e.g. NEVER run `nanobot <skill-name>` to "execute" a skill).
+- If exactly one skill clearly applies: read its SKILL.md with the read_file tool, then follow it.
 - If multiple could apply: choose the most specific one, then read/follow it.
 - If none clearly apply: do not read any SKILL.md.
 Constraints: never read more than one skill up front; only read after selecting.
