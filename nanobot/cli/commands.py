@@ -403,6 +403,7 @@ def gateway(
         on_heartbeat=on_heartbeat,
         interval_s=30 * 60,  # 30 minutes
         enabled=True,
+        run_on_start=True,
     )
 
     # Create channel manager
