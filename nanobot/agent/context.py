@@ -66,14 +66,15 @@ class ContextBuilder:
 The following skills extend your capabilities. Before replying: scan the <description> entries.
 Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
 - Skills are playbooks NOT scripts. Do not try to run a skill as a guessed nanobot CLI subcommand (e.g. NEVER run `nanobot <skill-name>` to "execute" a skill).
-- For task-oriented requests, skill selection is mandatory before tool use: if one skill clearly applies, read it first.
+- For task-oriented requests, prioritize skill selection: if one skill clearly applies, read it before tool use.
 - If exactly one skill clearly applies: read its SKILL.md with the read_file tool, then follow it.
 - If multiple could apply: choose the most specific one, then read/follow it.
 - If none clearly apply: do not read any SKILL.md.
+- Start with one selected skill; load additional skills later only when a new sub-problem clearly requires them.
 - Following a skill never replaces the duty to deliver a final, user-ready answer.
 - If a default exists, apply it directly instead of asking preference questions.
 - Ask clarifying questions only when missing critical information blocks correct completion.
-Constraints: never read more than one skill up front; only read after selecting.
+Constraints: read at most one skill up front; after that, only load more skills when clearly necessary.
 
 {skills_summary}""")
 
@@ -118,7 +119,8 @@ For normal conversation text, respond directly without calling the message tool.
 Do not claim that attachments are impossible if a channel supports file send and you can provide local paths.
 
 Execution policy:
-- For task-oriented requests, check the skill summary first; if one skill clearly applies, read and follow it before executing tools.
+- For task-oriented requests, check the skill summary first and prioritize a clearly matching skill before tool use.
+- Continue with additional tool calls when current evidence is insufficient; finalize once it is sufficient.
 - For direct user requests, provide the final answer in the same reply whenever feasible.
 - Avoid process-only updates ("next steps", "I gathered data") as final output unless explicitly asked.
 - Be proactive: choose sensible defaults and continue.

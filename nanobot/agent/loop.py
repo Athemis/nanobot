@@ -216,9 +216,9 @@ class AgentLoop:
                     {
                         "role": "user",
                         "content": (
-                            "Provide the final answer now using sensible defaults; "
-                            "ask one brief clarifying question only if a critical blocker "
-                            "prevents a correct answer."
+                            "Using the tool results, either finalize now with sensible defaults "
+                            "(if sufficient) or run the next necessary tool call; ask one brief "
+                            "clarifying question only if a critical blocker prevents progress."
                         ),
                     }
                 )
