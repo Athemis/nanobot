@@ -237,7 +237,7 @@ class OpenAICodexConfig(ProviderConfig):
 
 class ProvidersConfig(BaseModel):
     """Configuration for LLM providers."""
-
+    custom: ProviderConfig = Field(default_factory=ProviderConfig)  # Any OpenAI-compatible endpoint
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
