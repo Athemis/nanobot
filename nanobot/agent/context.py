@@ -65,16 +65,12 @@ class ContextBuilder:
 
 The following skills extend your capabilities. Before replying: scan the <description> entries.
 Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
-- Skills are playbooks NOT scripts. Do not try to run a skill as a guessed nanobot CLI subcommand (e.g. NEVER run `nanobot <skill-name>` to "execute" a skill).
-- For task-oriented requests, prioritize skill selection: if one skill clearly applies, read it before tool use.
-- If exactly one skill clearly applies: read its SKILL.md with the read_file tool, then follow it.
-- If multiple could apply: choose the most specific one, then read/follow it.
-- If none clearly apply: do not read any SKILL.md.
+- Skills are playbooks, not scripts. NEVER run guessed commands like `nanobot <skill-name>`.
+- If exactly one skill clearly applies, read its SKILL.md before tool use and follow it.
+- If multiple skills could apply, choose the most specific one, then read and follow it.
+- If no skill clearly applies, do not read any SKILL.md.
 - Start with one selected skill; load additional skills later only when a new sub-problem clearly requires them.
-- Following a skill never replaces the duty to deliver a final, user-ready answer.
-- If a default exists, apply it directly instead of asking preference questions.
-- Ask clarifying questions only when missing critical information blocks correct completion.
-Constraints: read at most one skill up front; after that, only load more skills when clearly necessary.
+- If a reasonable default exists, do not ask preference follow-up questions.
 
 {skills_summary}""")
 
