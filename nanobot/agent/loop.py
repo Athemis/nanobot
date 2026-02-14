@@ -212,7 +212,16 @@ class AgentLoop:
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
-                messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Provide the final answer now using sensible defaults; "
+                            "ask one brief clarifying question only if a critical blocker "
+                            "prevents a correct answer."
+                        ),
+                    }
+                )
             else:
                 final_content = response.content
                 break
