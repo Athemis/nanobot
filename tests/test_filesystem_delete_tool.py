@@ -29,6 +29,20 @@ async def test_delete_file_not_found(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_file_resolves_relative_path_against_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    file_path = workspace / "to_delete.txt"
+    file_path.write_text("data", encoding="utf-8")
+
+    tool = DeleteFileTool(workspace=workspace)
+    result = await tool.execute(path="to_delete.txt")
+
+    assert result == "Successfully deleted to_delete.txt"
+    assert not file_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_delete_file_rejects_directory(tmp_path: Path) -> None:
     dir_path = tmp_path / "folder"
     dir_path.mkdir()
