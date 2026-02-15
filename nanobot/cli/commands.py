@@ -29,6 +29,10 @@ app = typer.Typer(
 
 console = Console()
 EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
+OPENROUTER_DEFAULT_EXTRA_HEADERS = {
+    "HTTP-Referer": "https://github.com/HKUDS/nanobot",
+    "X-Title": "nanobot",
+}
 
 # ---------------------------------------------------------------------------
 # CLI input: prompt_toolkit for editing, paste, history, and display
@@ -112,6 +116,19 @@ def _is_exit_command(command: str) -> bool:
     return command.lower() in EXIT_COMMANDS
 
 
+def _seed_openrouter_attribution_headers(config) -> None:
+    """Seed OpenRouter attribution headers when unset during onboarding."""
+    if config.providers.openrouter.extra_headers is None:
+        config.providers.openrouter.extra_headers = dict(OPENROUTER_DEFAULT_EXTRA_HEADERS)
+
+
+def _resolve_runtime_extra_headers(provider_name: str | None, extra_headers: dict[str, str] | None) -> dict[str, str] | None:
+    """Apply runtime OpenRouter attribution fallback when headers are unset."""
+    if provider_name == "openrouter" and extra_headers is None:
+        return dict(OPENROUTER_DEFAULT_EXTRA_HEADERS)
+    return extra_headers
+
+
 async def _read_interactive_input_async() -> str:
     """Read user input using prompt_toolkit (handles paste, history, display).
 
@@ -168,6 +185,7 @@ def onboard():
         console.print("  [bold]N[/bold] = refresh config, keeping existing values and adding new fields")
         if typer.confirm("Overwrite?"):
             config = Config()
+            _seed_openrouter_attribution_headers(config)
             save_config(config)
             console.print(f"[green]✓[/green] Config reset to defaults at {config_path}")
         else:
@@ -304,7 +322,7 @@ def _make_provider(config: Config):
         api_key=p.api_key if p else None,
         api_base=config.get_api_base(model),
         default_model=model,
-        extra_headers=p.extra_headers if p else None,
+        extra_headers=_resolve_runtime_extra_headers(provider_name, p.extra_headers if p else None),
         provider_name=provider_name,
     )
 
