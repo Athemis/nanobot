@@ -3,6 +3,7 @@
 import asyncio
 from contextlib import AsyncExitStack
 import json
+import json_repair
 from pathlib import Path
 from typing import Any
 
@@ -254,7 +255,7 @@ class AgentLoop:
             except asyncio.TimeoutError:
                 continue
 
-    async def _close_mcp(self) -> None:
+    async def close_mcp(self) -> None:
         """Close MCP connections."""
         if self._mcp_stack:
             try:
@@ -452,9 +453,15 @@ Respond with ONLY valid JSON, no markdown fences."""
                 model=self.model,
             )
             text = (response.content or "").strip()
+            if not text:
+                logger.warning("Memory consolidation: LLM returned empty response, skipping")
+                return
             if text.startswith("```"):
                 text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-            result = json.loads(text)
+            result = json_repair.loads(text)
+            if not isinstance(result, dict):
+                logger.warning(f"Memory consolidation: unexpected response type, skipping. Response: {text[:200]}")
+                return
 
             if entry := result.get("history_entry"):
                 memory.append_history(entry)

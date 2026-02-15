@@ -431,7 +431,7 @@ def gateway(
         except KeyboardInterrupt:
             console.print("\nShutting down...")
         finally:
-            await agent._close_mcp()
+            await agent.close_mcp()
             heartbeat.stop()
             cron.stop()
             agent.stop()
@@ -498,7 +498,7 @@ def agent(
             with _thinking_ctx():
                 response = await agent_loop.process_direct(message, session_id)
             _print_agent_response(response, render_markdown=markdown)
-            await agent_loop._close_mcp()
+            await agent_loop.close_mcp()
 
         asyncio.run(run_once())
     else:
@@ -542,7 +542,7 @@ def agent(
                         console.print("\nGoodbye!")
                         break
             finally:
-                await agent_loop._close_mcp()
+                await agent_loop.close_mcp()
 
         asyncio.run(run_interactive())
 

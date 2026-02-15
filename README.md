@@ -16,7 +16,7 @@
 
 ⚡️ Delivers core agent functionality in just **~4,000** lines of code — **99% smaller** than Clawdbot's 430k+ lines.
 
-📏 Real-time line count: **3,536 lines** (run `bash core_agent_lines.sh` to verify anytime)
+📏 Real-time line count: **3,663 lines** (run `bash core_agent_lines.sh` to verify anytime)
 
 ## 📢 News
 
@@ -753,20 +753,46 @@ Config file: `~/.nanobot/config.json`
 > - **Zhipu Coding Plan**: If you're on Zhipu's coding plan, set `"apiBase": "https://open.bigmodel.cn/api/coding/paas/v4"` in your zhipu provider config.
 > - **MiniMax (Mainland China)**: If your API key is from MiniMax's mainland China platform (minimaxi.com), set `"apiBase": "https://api.minimaxi.com/v1"` in your minimax provider config.
 
-| Provider     | Purpose                                   | Get API Key                                                          |
-| ------------ | ----------------------------------------- | -------------------------------------------------------------------- |
-| `openrouter` | LLM (recommended, access to all models)   | [openrouter.ai](https://openrouter.ai)                               |
-| `anthropic`  | LLM (Claude direct)                       | [console.anthropic.com](https://console.anthropic.com)               |
-| `openai`     | LLM (GPT direct)                          | [platform.openai.com](https://platform.openai.com)                   |
-| `deepseek`   | LLM (DeepSeek direct)                     | [platform.deepseek.com](https://platform.deepseek.com)               |
-| `groq`       | LLM + **Voice transcription** (Whisper)   | [console.groq.com](https://console.groq.com)                         |
-| `gemini`     | LLM (Gemini direct)                       | [aistudio.google.com](https://aistudio.google.com)                   |
-| `minimax`    | LLM (MiniMax direct)                      | [platform.minimax.io](https://platform.minimax.io)                   |
-| `aihubmix`   | LLM (API gateway, access to all models)   | [aihubmix.com](https://aihubmix.com)                                 |
-| `dashscope`  | LLM (Qwen)                                | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |
-| `moonshot`   | LLM (Moonshot/Kimi)                       | [platform.moonshot.cn](https://platform.moonshot.cn)                 |
-| `zhipu`      | LLM (Zhipu GLM)                           | [open.bigmodel.cn](https://open.bigmodel.cn)                         |
-| `vllm`       | LLM (local, any OpenAI-compatible server) | —                                                                    |
+| Provider | Purpose | Get API Key |
+|----------|---------|-------------|
+| `custom` | Any OpenAI-compatible endpoint | — |
+| `openrouter` | LLM (recommended, access to all models) | [openrouter.ai](https://openrouter.ai) |
+| `anthropic` | LLM (Claude direct) | [console.anthropic.com](https://console.anthropic.com) |
+| `openai` | LLM (GPT direct) | [platform.openai.com](https://platform.openai.com) |
+| `deepseek` | LLM (DeepSeek direct) | [platform.deepseek.com](https://platform.deepseek.com) |
+| `groq` | LLM + **Voice transcription** (Whisper) | [console.groq.com](https://console.groq.com) |
+| `gemini` | LLM (Gemini direct) | [aistudio.google.com](https://aistudio.google.com) |
+| `minimax` | LLM (MiniMax direct) | [platform.minimax.io](https://platform.minimax.io) |
+| `aihubmix` | LLM (API gateway, access to all models) | [aihubmix.com](https://aihubmix.com) |
+| `dashscope` | LLM (Qwen) | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |
+| `moonshot` | LLM (Moonshot/Kimi) | [platform.moonshot.cn](https://platform.moonshot.cn) |
+| `zhipu` | LLM (Zhipu GLM) | [open.bigmodel.cn](https://open.bigmodel.cn) |
+| `vllm` | LLM (local, any OpenAI-compatible server) | — |
+
+<details>
+<summary><b>Custom Provider (Any OpenAI-compatible API)</b></summary>
+
+If your provider is not listed above but exposes an **OpenAI-compatible API** (e.g. Together AI, Fireworks, Azure OpenAI, self-hosted endpoints), use the `custom` provider:
+
+```json
+{
+  "providers": {
+    "custom": {
+      "apiKey": "your-api-key",
+      "apiBase": "https://api.your-provider.com/v1"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "your-model-name"
+    }
+  }
+}
+```
+
+> The `custom` provider routes through LiteLLM's OpenAI-compatible path. It works with any endpoint that follows the OpenAI chat completions API format. The model name is passed directly to the endpoint without any prefix.
+
+</details>
 
 <details>
 <summary><b>Adding a New Provider (Developer Guide)</b></summary>
@@ -811,6 +837,41 @@ That's it! Environment variables, model prefixing, config matching, and `nanobot
 | `strip_model_prefix`     | Strip existing prefix before re-prefixing       | `True` (for AiHubMix)                    |
 
 </details>
+
+
+### MCP (Model Context Protocol)
+
+> [!TIP]
+> The config format is compatible with Claude Desktop / Cursor. You can copy MCP server configs directly from any MCP server's README.
+
+nanobot supports [MCP](https://modelcontextprotocol.io/) — connect external tool servers and use them as native agent tools.
+
+Add MCP servers to your `config.json`:
+
+```json
+{
+  "tools": {
+    "mcpServers": {
+      "filesystem": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
+      }
+    }
+  }
+}
+```
+
+Two transport modes are supported:
+
+| Mode | Config | Example |
+|------|--------|---------|
+| **Stdio** | `command` + `args` | Local process via `npx` / `uvx` |
+| **HTTP** | `url` | Remote endpoint (`https://mcp.example.com/sse`) |
+
+MCP tools are automatically discovered and registered on startup. The LLM can use them alongside built-in tools — no extra configuration needed.
+
+
+
 
 ### Security
 
