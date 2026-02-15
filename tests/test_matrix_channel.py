@@ -199,7 +199,7 @@ async def test_start_skips_load_store_when_device_id_missing(
     assert len(clients) == 1
     assert clients[0].config.encryption_enabled is True
     assert clients[0].load_store_called is False
-    assert len(clients[0].callbacks) == 3
+    assert len(clients[0].callbacks) == 4
     assert len(clients[0].response_callbacks) == 3
 
     await channel.stop()
@@ -213,9 +213,11 @@ async def test_register_event_callbacks_uses_media_base_filter() -> None:
 
     channel._register_event_callbacks()
 
-    assert len(client.callbacks) == 3
+    assert len(client.callbacks) == 4
     assert client.callbacks[1][0] == channel._on_media_message
     assert client.callbacks[1][1] == matrix_module.MATRIX_MEDIA_EVENT_FILTER
+    assert client.callbacks[2][0] == channel._on_unknown_message
+    assert client.callbacks[2][1] == matrix_module.RoomMessageUnknown
 
 
 def test_media_event_filter_does_not_match_text_events() -> None:
@@ -223,6 +225,95 @@ def test_media_event_filter_does_not_match_text_events() -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_unknown_message_routes_location_event() -> None:
+    channel = MatrixChannel(_make_config(), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    channel.client = client
+
+    handled: list[dict[str, object]] = []
+
+    async def _fake_handle_message(**kwargs) -> None:
+        handled.append(kwargs)
+
+    channel._handle_message = _fake_handle_message  # type: ignore[method-assign]
+
+    room = SimpleNamespace(room_id="!room:matrix.org", display_name="Test room")
+    event = SimpleNamespace(
+        sender="@alice:matrix.org",
+        event_id="$loc1",
+        msgtype="m.location",
+        body="Meet me here",
+        source={"content": {"msgtype": "m.location", "geo_uri": "geo:52.52,13.405"}},
+    )
+
+    await channel._on_unknown_message(room, event)
+
+    assert len(handled) == 1
+    forwarded = handled[0]
+    assert forwarded["content"] == (
+        "Meet me here\n"
+        "[location: 52.520000,13.405000]\n"
+        "[map: https://maps.google.com/?q=52.520000,13.405000]"
+    )
+    metadata = forwarded["metadata"]
+    assert metadata["locations"][0]["provider"] == "matrix"
+    assert metadata["locations"][0]["geo_uri"] == "geo:52.52,13.405"
+    assert metadata["locations"][0]["lat"] == 52.52
+    assert metadata["locations"][0]["lon"] == 13.405
+
+
+@pytest.mark.asyncio
+async def test_on_unknown_message_forwards_non_location_body_best_effort() -> None:
+    channel = MatrixChannel(_make_config(), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    channel.client = client
+
+    handled: list[dict[str, object]] = []
+
+    async def _fake_handle_message(**kwargs) -> None:
+        handled.append(kwargs)
+
+    channel._handle_message = _fake_handle_message  # type: ignore[method-assign]
+
+    room = SimpleNamespace(room_id="!room:matrix.org", display_name="Test room")
+    event = SimpleNamespace(
+        sender="@alice:matrix.org",
+        msgtype="m.notice",
+        source={"content": {"msgtype": "m.notice", "body": "Heads up"}},
+    )
+
+    await channel._on_unknown_message(room, event)
+
+    assert len(handled) == 1
+    forwarded = handled[0]
+    assert forwarded["content"] == "Heads up"
+    assert forwarded["metadata"]["unknown_msgtype"] == "m.notice"
+
+
+@pytest.mark.asyncio
+async def test_on_unknown_message_ignores_non_location_event_without_body() -> None:
+    channel = MatrixChannel(_make_config(), MessageBus())
+    client = _FakeAsyncClient("", "", "", None)
+    channel.client = client
+
+    handled: list[dict[str, object]] = []
+
+    async def _fake_handle_message(**kwargs) -> None:
+        handled.append(kwargs)
+
+    channel._handle_message = _fake_handle_message  # type: ignore[method-assign]
+
+    room = SimpleNamespace(room_id="!room:matrix.org", display_name="Test room")
+    event = SimpleNamespace(
+        sender="@alice:matrix.org",
+        msgtype="org.matrix.msc3381.poll.start",
+        source={"content": {"msgtype": "org.matrix.msc3381.poll.start"}},
+    )
+
+    await channel._on_unknown_message(room, event)
+
+    assert handled == []
+
 async def test_start_disables_e2ee_when_configured(
     monkeypatch, tmp_path
 ) -> None:
