@@ -253,7 +253,7 @@ Talk to your nanobot through Matrix (Element) or Email — anytime, anywhere.
 <details>
 <summary><b>Matrix (Element)</b></summary>
 
-Uses Matrix sync via `matrix-nio` (inbound media + outbound file attachments).
+Uses Matrix sync via `matrix-nio` (inbound media + location + outbound file attachments).
 
 **1. Create/choose a Matrix account**
 
@@ -296,6 +296,7 @@ Uses Matrix sync via `matrix-nio` (inbound media + outbound file attachments).
 > `allowRoomMentions`: If `true`, accepts `@room` (`m.mentions.room`) in mention mode.
 > `e2eeEnabled`: Enables Matrix E2EE support (default `true`); set `false` only for plaintext-only setups.
 > `maxMediaBytes`: Max attachment size in bytes (default `20MB`) for inbound and outbound media handling; set to `0` to block all inbound and outbound attachment uploads.
+> Inbound Matrix `m.location` events are normalized into `metadata.locations` and echoed into message text with `[location: ...]`/`[map: ...]` markers so the agent can act on them directly.
 
 > [!NOTE]
 > Matrix E2EE implications:

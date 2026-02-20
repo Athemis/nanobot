@@ -20,6 +20,7 @@ from nio import (
     RoomMessage,
     RoomMessageMedia,
     RoomMessageText,
+    RoomMessageUnknown,
     RoomSendError,
     RoomTypingError,
     SyncError,
@@ -48,6 +49,9 @@ MATRIX_ATTACHMENT_TOO_LARGE_TEMPLATE = "[attachment: {} - too large]"
 MATRIX_ATTACHMENT_FAILED_TEMPLATE = "[attachment: {} - download failed]"
 MATRIX_ATTACHMENT_UPLOAD_FAILED_TEMPLATE = "[attachment: {} - upload failed]"
 MATRIX_DEFAULT_ATTACHMENT_NAME = "attachment"
+MATRIX_LOCATION_MARKER_TEMPLATE = "[location: {latitude:.6f},{longitude:.6f}]"
+MATRIX_LOCATION_GEO_URI_MARKER_TEMPLATE = "[location: {geo_uri}]"
+MATRIX_LOCATION_MAP_LINK_TEMPLATE = "[map: https://maps.google.com/?q={latitude:.6f},{longitude:.6f}]"
 
 # Runtime callback filter for nio event dispatch (checked via isinstance).
 MATRIX_MEDIA_EVENT_FILTER = (RoomMessageMedia, RoomEncryptedMedia)
@@ -643,6 +647,7 @@ class MatrixChannel(BaseChannel):
         """Register Matrix event callbacks used by this channel."""
         self.client.add_event_callback(self._on_message, RoomMessageText)
         self.client.add_event_callback(self._on_media_message, MATRIX_MEDIA_EVENT_FILTER)
+        self.client.add_event_callback(self._on_unknown_message, RoomMessageUnknown)
         self.client.add_event_callback(self._on_room_invite, InviteEvent)
 
     def _register_response_callbacks(self) -> None:
@@ -809,6 +814,56 @@ class MatrixChannel(BaseChannel):
             return {}
         content = source.get("content")
         return content if isinstance(content, dict) else {}
+
+    @staticmethod
+    def _parse_geo_uri_coordinates(geo_uri: str) -> tuple[float, float] | None:
+        """Extract latitude/longitude from geo URI values like geo:lat,lon."""
+        if not geo_uri.startswith("geo:"):
+            return None
+
+        coordinates = geo_uri[4:].split(";", 1)[0]
+        parts = coordinates.split(",", 1)
+        if len(parts) != 2:
+            return None
+
+        try:
+            latitude = float(parts[0].strip())
+            longitude = float(parts[1].strip())
+        except ValueError:
+            return None
+
+        if not (-90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
+            return None
+
+        return latitude, longitude
+
+    def _event_location(self, event: RoomMessageUnknown) -> dict[str, Any] | None:
+        """Extract a minimal, channel-agnostic location payload from Matrix events."""
+        msgtype = getattr(event, "msgtype", None)
+        if not isinstance(msgtype, str):
+            return None
+        if msgtype != "m.location":
+            return None
+
+        content = self._event_source_content(event)
+        geo_uri = content.get("geo_uri")
+        if not isinstance(geo_uri, str) or not geo_uri.strip():
+            return None
+
+        location: dict[str, Any] = {
+            "provider": "matrix",
+            "geo_uri": geo_uri,
+            "event_id": str(getattr(event, "event_id", "") or ""),
+        }
+        coordinates = self._parse_geo_uri_coordinates(geo_uri)
+        if coordinates:
+            location["lat"], location["lon"] = coordinates
+
+        body = getattr(event, "body", None)
+        if isinstance(body, str) and body.strip():
+            location["label"] = body.strip()
+
+        return location
 
     def _event_thread_root_id(self, event: RoomMessage) -> str | None:
         """Return thread root event_id if this message is inside a thread."""
@@ -1151,6 +1206,74 @@ class MatrixChannel(BaseChannel):
                 chat_id=room.room_id,
                 content="\n".join(content_parts),
                 media=media_paths,
+                metadata=metadata,
+            )
+        except Exception:
+            await self._stop_typing_keepalive(room.room_id, clear_typing=True)
+            raise
+
+    async def _on_unknown_message(self, room: MatrixRoom, event: RoomMessageUnknown) -> None:
+        """Handle inbound Matrix unknown events and route supported msgtypes."""
+        if event.sender == self.config.user_id:
+            return
+
+        if not self._should_process_message(room, event):
+            return
+
+        msgtype = getattr(event, "msgtype", None)
+        metadata: dict[str, Any] = {
+            "room": getattr(room, "display_name", room.room_id),
+        }
+        event_id = getattr(event, "event_id", None)
+        if isinstance(event_id, str) and event_id:
+            metadata["event_id"] = event_id
+        thread_meta = self._thread_metadata(event)
+        if thread_meta:
+            metadata.update(thread_meta)
+
+        content_parts: list[str] = []
+        body = getattr(event, "body", None)
+        if not isinstance(body, str) or not body.strip():
+            source_body = self._event_source_content(event).get("body")
+            if isinstance(source_body, str):
+                body = source_body
+        if isinstance(body, str) and body.strip():
+            content_parts.append(body.strip())
+
+        if msgtype == "m.location":
+            location = self._event_location(event)
+            if location is None:
+                return
+            metadata["locations"] = [location]
+
+            label = location.get("label")
+            if isinstance(label, str) and label and label not in content_parts:
+                content_parts.append(label)
+
+            latitude = location.get("lat")
+            longitude = location.get("lon")
+            if isinstance(latitude, float) and isinstance(longitude, float):
+                content_parts.append(
+                    MATRIX_LOCATION_MARKER_TEMPLATE.format(latitude=latitude, longitude=longitude)
+                )
+                content_parts.append(
+                    MATRIX_LOCATION_MAP_LINK_TEMPLATE.format(latitude=latitude, longitude=longitude)
+                )
+            else:
+                content_parts.append(
+                    MATRIX_LOCATION_GEO_URI_MARKER_TEMPLATE.format(geo_uri=location["geo_uri"])
+                )
+        else:
+            if not content_parts:
+                return
+            metadata["unknown_msgtype"] = msgtype if isinstance(msgtype, str) else ""
+
+        await self._start_typing_keepalive(room.room_id)
+        try:
+            await self._handle_message(
+                sender_id=event.sender,
+                chat_id=room.room_id,
+                content="\n".join(content_parts),
                 metadata=metadata,
             )
         except Exception:
